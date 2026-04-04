@@ -1,0 +1,54 @@
+version: "3.9"
+
+services:
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/gateway.db
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-change-in-prod}
+      - SUPERADMIN_USERNAME=${SUPERADMIN_USERNAME:-admin}
+      - SUPERADMIN_EMAIL=${SUPERADMIN_EMAIL:-admin@example.com}
+      - SUPERADMIN_PASSWORD=${SUPERADMIN_PASSWORD:-admin123}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AZURE_API_KEY=${AZURE_API_KEY:-}
+      - AZURE_API_BASE=${AZURE_API_BASE:-}
+      - AZURE_API_VERSION=${AZURE_API_VERSION:-2024-02-01}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION_NAME=${AWS_REGION_NAME:-us-east-1}
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+      - RATE_LIMIT_BACKEND=memory
+      - DEBUG=true
+      - CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]
+    volumes:
+      # Mount gateway source into /app/gateway/ so hot-reload works
+      # and the Python package path (gateway.main) resolves correctly
+      - ./gateway:/app/gateway
+      - gateway_data:/app/data
+    working_dir: /app
+    command: uvicorn gateway.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000/api
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  gateway_data:

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Dark background circle -->
+  <circle cx="32" cy="32" r="32" fill="#111111"/>
+  <!-- Outer ring -->
+  <circle cx="32" cy="32" r="28" stroke="#C0531A" stroke-width="3" fill="none"/>
+
+  <!-- Caliper body — horizontal beam -->
+  <line x1="14" y1="32" x2="50" y2="32" stroke="#C0531A" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Left fixed jaw (top) -->
+  <line x1="14" y1="32" x2="14" y2="20" stroke="#C0531A" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Left fixed jaw (bottom) -->
+  <line x1="14" y1="32" x2="14" y2="44" stroke="#C0531A" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Right sliding jaw (top) -->
+  <line x1="38" y1="32" x2="38" y2="22" stroke="#C0531A" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Right sliding jaw (bottom) -->
+  <line x1="38" y1="32" x2="38" y2="42" stroke="#C0531A" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Jaw tips — top measurement -->
+  <line x1="14" y1="20" x2="38" y2="22" stroke="#C0531A" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="2 2"/>
+  <!-- Jaw tips — bottom measurement -->
+  <line x1="14" y1="44" x2="38" y2="42" stroke="#C0531A" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="2 2"/>
+
+  <!-- Depth rod (right of beam) -->
+  <line x1="50" y1="32" x2="50" y2="26" stroke="#C0531A" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Scale tick marks on beam -->
+  <line x1="20" y1="30" x2="20" y2="28" stroke="#C0531A" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="26" y1="30" x2="26" y2="27" stroke="#C0531A" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="32" y1="30" x2="32" y2="26" stroke="#C0531A" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- Measurement gap highlight -->
+  <rect x="14" y="22" width="24" height="20" fill="#C0531A" fill-opacity="0.06"/>
+</svg>

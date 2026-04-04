@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+
+  /* Light Theme */
+  --color-bg: #ffffff;
+  --color-surface: #f8fafc;
+  /* Slate 50 */
+  --color-primary: #3b82f6;
+  /* Blue 500 */
+  --color-primary-foreground: #ffffff;
+  --color-text: #0f172a;
+  /* Slate 900 */
+  --color-text-muted: #64748b;
+  /* Slate 500 */
+  --color-border: #e2e8f0;
+  /* Slate 200 */
+}
+
+.dark {
+  /* Dark Theme */
+  --color-bg: #0f172a;
+  /* Slate 900 */
+  --color-surface: #1e293b;
+  /* Slate 800 */
+  --color-primary: #60a5fa;
+  /* Blue 400 */
+  --color-primary-foreground: #0f172a;
+  --color-text: #f8fafc;
+  /* Slate 50 */
+  --color-text-muted: #94a3b8;
+  /* Slate 400 */
+  --color-border: #334155;
+  /* Slate 700 */
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}

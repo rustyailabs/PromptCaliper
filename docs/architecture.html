@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PromptCaliper — Architecture & Workflow</title>
+<style>
+  /* ── Reset & base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --rust:   #c0441e;
+    --rust-b: #e05a2b;
+    --cyan:   #22d3ee;
+    --dark:   #0d0d0f;
+    --panel:  #16181d;
+    --border: #2a2d35;
+    --text:   #e8e8ec;
+    --muted:  #8b8fa8;
+    --green:  #22c55e;
+    --yellow: #f59e0b;
+    --purple: #a78bfa;
+    --blue:   #60a5fa;
+    --red:    #f87171;
+  }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--dark);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(13,13,15,.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    display: flex; align-items: center; gap: 2rem;
+    height: 56px;
+  }
+  .nav-brand { font-weight: 800; font-size: 1.1rem; color: var(--rust-b); letter-spacing: -.5px; }
+  .nav-brand span { color: var(--cyan); }
+  nav a {
+    text-decoration: none; color: var(--muted); font-size: .85rem;
+    padding: .25rem .5rem; border-radius: 4px; transition: color .2s;
+  }
+  nav a:hover { color: var(--text); }
+  .nav-sep { color: var(--border); font-size: .7rem; }
+
+  /* ── Layout ── */
+  .page { max-width: 1200px; margin: 0 auto; padding: 3rem 2rem 6rem; }
+
+  /* ── Hero ── */
+  .hero {
+    text-align: center;
+    padding: 4rem 1rem 3rem;
+    background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(192,68,30,.18) 0%, transparent 70%);
+    border-radius: 16px;
+    margin-bottom: 4rem;
+    border: 1px solid var(--border);
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: .5rem;
+    background: rgba(192,68,30,.15); border: 1px solid rgba(192,68,30,.35);
+    color: var(--rust-b); font-size: .75rem; font-weight: 600;
+    padding: .3rem .9rem; border-radius: 999px; letter-spacing: .05em;
+    text-transform: uppercase; margin-bottom: 1.5rem;
+  }
+  .hero h1 { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 800; letter-spacing: -1px; margin-bottom: 1rem; }
+  .hero h1 span { color: var(--rust-b); }
+  .hero p { color: var(--muted); font-size: 1.05rem; max-width: 680px; margin: 0 auto; }
+
+  /* ── Section headers ── */
+  .section { margin-bottom: 4rem; }
+  .section-label {
+    display: inline-flex; align-items: center; gap: .6rem;
+    font-size: .7rem; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: .75rem;
+  }
+  .section-label::before { content: ''; display: block; width: 24px; height: 1px; background: var(--border); }
+  h2 { font-size: 1.6rem; font-weight: 700; letter-spacing: -.5px; margin-bottom: .5rem; }
+  h2 span { color: var(--rust-b); }
+  .subtitle { color: var(--muted); font-size: .9rem; margin-bottom: 2rem; }
+
+  /* ── Architecture diagram ── */
+  .arch-diagram {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2.5rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .arch-diagram::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--rust), var(--cyan));
+  }
+  .arch-row {
+    display: flex; align-items: stretch; gap: 0;
+    position: relative;
+  }
+  .arch-row + .arch-row { margin-top: 1.5rem; }
+
+  /* Arrow between rows */
+  .arch-arrow {
+    display: flex; justify-content: center; align-items: center;
+    margin: .6rem 0; color: var(--muted); font-size: .8rem;
+    gap: .4rem;
+  }
+  .arch-arrow .line {
+    width: 2px; height: 28px;
+    background: linear-gradient(to bottom, var(--rust), var(--cyan));
+    border-radius: 1px;
+  }
+  .arch-arrow .label { color: var(--muted); font-size: .7rem; font-family: monospace; }
+
+  .arch-box {
+    flex: 1; background: rgba(255,255,255,.03);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 1.2rem 1.5rem;
+    transition: border-color .2s, background .2s;
+    position: relative;
+  }
+  .arch-box:hover { border-color: var(--rust); background: rgba(192,68,30,.06); }
+  .arch-box + .arch-box { margin-left: 1rem; }
+  .arch-box .box-icon { font-size: 1.4rem; margin-bottom: .5rem; }
+  .arch-box .box-title { font-weight: 700; font-size: .95rem; margin-bottom: .25rem; }
+  .arch-box .box-desc { font-size: .78rem; color: var(--muted); }
+  .arch-box .box-tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .75rem; }
+  .tag {
+    font-size: .65rem; font-weight: 600; padding: .15rem .5rem;
+    border-radius: 4px; font-family: monospace; letter-spacing: .03em;
+  }
+  .tag-rust   { background: rgba(192,68,30,.2); color: var(--rust-b); }
+  .tag-cyan   { background: rgba(34,211,238,.12); color: var(--cyan); }
+  .tag-green  { background: rgba(34,197,94,.12); color: var(--green); }
+  .tag-purple { background: rgba(167,139,250,.12); color: var(--purple); }
+  .tag-yellow { background: rgba(245,158,11,.12); color: var(--yellow); }
+  .tag-blue   { background: rgba(96,165,250,.12); color: var(--blue); }
+  .tag-muted  { background: rgba(255,255,255,.06); color: var(--muted); }
+
+  /* Accent border helpers */
+  .border-rust   { border-color: rgba(192,68,30,.5) !important; }
+  .border-cyan   { border-color: rgba(34,211,238,.4) !important; }
+  .border-green  { border-color: rgba(34,197,94,.4) !important; }
+  .border-purple { border-color: rgba(167,139,250,.4) !important; }
+  .border-yellow { border-color: rgba(245,158,11,.4) !important; }
+
+  /* ── Request flow ── */
+  .flow {
+    display: flex; align-items: flex-start; gap: 0;
+    overflow-x: auto; padding-bottom: .5rem;
+    -webkit-overflow-scrolling: touch;
+  }
+  .flow-step {
+    flex: 0 0 auto; min-width: 140px; max-width: 160px;
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+  }
+  .flow-step-box {
+    width: 100%; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1rem .75rem;
+    transition: border-color .2s, transform .2s;
+    cursor: default;
+  }
+  .flow-step-box:hover { transform: translateY(-3px); }
+  .flow-step-num {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--rust); color: #fff;
+    font-size: .7rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto .6rem;
+  }
+  .flow-step-title { font-size: .8rem; font-weight: 700; margin-bottom: .3rem; }
+  .flow-step-desc  { font-size: .7rem; color: var(--muted); }
+  .flow-arrow {
+    flex: 0 0 auto; padding: 0 .25rem;
+    display: flex; align-items: center;
+    color: var(--muted); font-size: 1.2rem;
+    margin-top: 40px;
+  }
+
+  /* ── Feature grid ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.25rem;
+  }
+  .feature-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem;
+    transition: border-color .2s, transform .2s;
+  }
+  .feature-card:hover { border-color: var(--rust); transform: translateY(-2px); }
+  .feature-card .fc-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem; margin-bottom: 1rem;
+  }
+  .feature-card h3 { font-size: .95rem; font-weight: 700; margin-bottom: .4rem; }
+  .feature-card p  { font-size: .8rem; color: var(--muted); }
+  .feature-card ul { list-style: none; margin-top: .75rem; }
+  .feature-card ul li { font-size: .78rem; color: var(--muted); padding: .2rem 0; display: flex; gap: .5rem; }
+  .feature-card ul li::before { content: '→'; color: var(--rust-b); }
+
+  /* ── Data model table ── */
+  .table-wrap {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  thead tr { background: rgba(255,255,255,.04); }
+  th { padding: .75rem 1.25rem; text-align: left; font-size: .7rem; font-weight: 700;
+       letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  td { padding: .75rem 1.25rem; border-top: 1px solid var(--border); }
+  tbody tr:hover { background: rgba(255,255,255,.02); }
+  td code {
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: .75rem; color: var(--cyan);
+    background: rgba(34,211,238,.08); padding: .1rem .4rem; border-radius: 4px;
+  }
+  td .muted { color: var(--muted); }
+
+  /* ── Deployment cards ── */
+  .deploy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 700px) { .deploy-grid { grid-template-columns: 1fr; } }
+  .deploy-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.75rem; position: relative; overflow: hidden;
+  }
+  .deploy-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  }
+  .deploy-card.dev::before  { background: var(--cyan); }
+  .deploy-card.prod::before { background: linear-gradient(90deg, var(--rust), var(--rust-b)); }
+  .deploy-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: .4rem; }
+  .deploy-card .dc-meta { font-size: .75rem; color: var(--muted); margin-bottom: 1.25rem; }
+  .deploy-card pre {
+    background: var(--dark); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1rem 1.25rem;
+    font-size: .76rem; font-family: 'Cascadia Code', 'Fira Code', monospace;
+    color: var(--cyan); overflow-x: auto; line-height: 1.7;
+  }
+  .deploy-card pre .comment { color: var(--muted); }
+  .deploy-card pre .cmd { color: var(--green); }
+
+  /* ── Stack chip list ── */
+  .stack-list { display: flex; flex-wrap: wrap; gap: .75rem; }
+  .stack-chip {
+    display: flex; align-items: center; gap: .5rem;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: .6rem 1rem;
+    font-size: .8rem;
+  }
+  .stack-chip .layer { font-size: .65rem; color: var(--muted); font-family: monospace; }
+
+  /* ── Footer ── */
+  footer {
+    border-top: 1px solid var(--border);
+    text-align: center; padding: 2rem;
+    font-size: .78rem; color: var(--muted);
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--dark); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Problem / Why section ── */
+  .problem-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 2rem;
+  }
+  .problem-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem;
+    transition: border-color .2s, transform .2s;
+  }
+  .problem-card:hover { border-color: var(--rust); transform: translateY(-2px); }
+  .problem-card .pc-icon { font-size: 1.5rem; margin-bottom: .75rem; }
+  .problem-card h3 { font-size: 1rem; font-weight: 800; margin-bottom: .5rem; letter-spacing: -.3px; }
+  .problem-card p { font-size: .8rem; color: var(--muted); line-height: 1.65; }
+  .problem-card p.hook { color: var(--text); font-size: .82rem; font-weight: 600; margin-bottom: .5rem; font-style: italic; }
+
+  /* ── Comparison table ── */
+  .vs-table-wrap {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; margin-bottom: 1.5rem;
+  }
+  .vs-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  .vs-table thead tr { background: rgba(255,255,255,.04); }
+  .vs-table th { padding: .75rem 1.25rem; text-align: left; font-size: .7rem; font-weight: 700;
+       letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .vs-table td { padding: .75rem 1.25rem; border-top: 1px solid var(--border); vertical-align: top; }
+  .vs-table tbody tr:hover { background: rgba(255,255,255,.02); }
+  .vs-table .col-ft { color: var(--text); }
+  .vs-table .col-ll { color: var(--muted); }
+  .vs-icon-yes { color: var(--green); font-weight: 700; }
+  .vs-icon-partial { color: var(--yellow); font-weight: 700; }
+  .vs-icon-no { color: var(--red); font-weight: 700; }
+
+  /* ── Changelog ── */
+  .changelog-list { display: flex; flex-direction: column; gap: 1rem; }
+  .cl-entry {
+    background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--rust); border-radius: 0 10px 10px 0;
+    padding: 1rem 1.25rem; transition: border-left-color .2s;
+  }
+  .cl-entry:hover { border-left-color: var(--cyan); }
+  .cl-entry .cl-meta { display: flex; gap: .75rem; align-items: center; margin-bottom: .4rem; flex-wrap: wrap; }
+  .cl-entry .cl-date { font-size: .7rem; font-family: monospace; color: var(--muted); }
+  .cl-entry .cl-badge { font-size: .65rem; font-weight: 700; padding: .15rem .5rem; border-radius: 4px; text-transform: uppercase; letter-spacing: .04em; }
+  .cl-entry h4 { font-size: .9rem; font-weight: 700; margin-bottom: .3rem; }
+  .cl-entry p { font-size: .8rem; color: var(--muted); line-height: 1.6; }
+  .cl-entry ul { list-style: none; margin-top: .5rem; }
+  .cl-entry ul li { font-size: .78rem; color: var(--muted); padding: .15rem 0; display: flex; gap: .5rem; }
+  .cl-entry ul li::before { content: '▸'; color: var(--rust-b); }
+</style>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav>
+  <span class="nav-brand">Forge<span>Trace</span></span>
+  <a href="#problem">Problem</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#request-flow">Request Flow</a>
+  <a href="#features">Features</a>
+  <a href="#vs-litellm">vs LiteLLM</a>
+  <a href="#data-model">Data Model</a>
+  <a href="#deploy">Deployment</a>
+  <a href="#changelog">Changelog</a>
+</nav>
+
+<div class="page">
+
+  <!-- ── Hero ── -->
+  <div class="hero">
+    <div class="hero-badge">🔥 AI Gateway · v2.0 · Enterprise Edition</div>
+    <h1>PromptCaliper <span>Architecture</span> & Workflow</h1>
+    <p>A self-hosted AI gateway built <em>on top of</em> LiteLLM — adding the enterprise layer that LiteLLM alone doesn't provide: a full admin console, team-scoped budgets, virtual key vaulting, guardrails, an append-only audit ledger, and multi-channel alerting. One entry point for all LLM traffic — governed, observed, and controlled.</p>
+  </div>
+
+  <!-- ── Section 0: Problem ── -->
+  <div class="section" id="problem">
+    <div class="section-label">Why PromptCaliper</div>
+    <h2>The <span>Problem</span> We Solve</h2>
+    <p class="subtitle">Six silent killers lurking in every AI deployment — PromptCaliper shuts them all down</p>
+
+    <div class="problem-grid">
+
+      <div class="problem-card" style="border-color:rgba(248,113,113,.3)">
+        <div class="pc-icon">🔓</div>
+        <h3>Keys in the Wild</h3>
+        <p class="hook">One leaked key = unlimited spend, zero accountability.</p>
+        <p>Provider keys scattered across CI pipelines, notebooks, and Slack messages. No way to revoke a single integration — you rotate the master key and break everything, or you leave the door open.</p>
+      </div>
+
+      <div class="problem-card" style="border-color:rgba(245,158,11,.3)">
+        <div class="pc-icon">💸</div>
+        <h3>Spend Now, Panic Later</h3>
+        <p class="hook">Your AI bill arrives after the damage is done.</p>
+        <p>Provider dashboards are rear-view mirrors. No real-time caps, no team-level chargeback, no kill-switch for a rogue batch job burning thousands overnight. Finance can't plan; engineering can't ship confidently.</p>
+      </div>
+
+      <div class="problem-card" style="border-color:rgba(96,165,250,.3)">
+        <div class="pc-icon">🕳️</div>
+        <h3>Your AI is a Black Box</h3>
+        <p class="hook">What did GPT-4o actually say last Tuesday?</p>
+        <p>No centralised log means every debug session is an archaeology project. Compliance audits, prompt regressions, and cost attribution all dead-end at "check the app logs — if they exist."</p>
+      </div>
+
+      <div class="problem-card" style="border-color:rgba(167,139,250,.3)">
+        <div class="pc-icon">🚫</div>
+        <h3>One Prompt Away From a Crisis</h3>
+        <p class="hook">PII in, sensitive data out — no net to catch it.</p>
+        <p>Content safety bolted onto each service individually means one uncovered endpoint is all it takes. Duplicated logic, inconsistent coverage, no single place to audit or tune rules under pressure.</p>
+      </div>
+
+      <div class="problem-card" style="border-color:rgba(34,211,238,.3)">
+        <div class="pc-icon">⛓️</div>
+        <h3>Locked In, Left Behind</h3>
+        <p class="hook">An OpenAI outage at 2 AM takes your product down.</p>
+        <p>Switching providers means a code deploy. Evaluating a new model means rewiring integrations. A/B testing models is months of engineering work instead of a config change.</p>
+      </div>
+
+      <div class="problem-card" style="border-color:rgba(34,197,94,.3)">
+        <div class="pc-icon">🔁</div>
+        <h3>Paying Full Price for Repeats</h3>
+        <p class="hook">Same question, same cost — every single time.</p>
+        <p>FAQ answers, templated reports, code snippets — sent fresh to the provider on every call. Without semantic caching, a 95%-similar question burns full token cost again. Latency and dollars stack up invisibly.</p>
+      </div>
+
+    </div>
+
+    <!-- Resolution banner -->
+    <div style="background:rgba(192,68,30,.07);border:1px solid rgba(192,68,30,.3);border-radius:12px;padding:1.5rem 2rem;display:flex;gap:1rem;align-items:flex-start;">
+      <span style="font-size:1.5rem;flex-shrink:0">⚡</span>
+      <div>
+        <div style="font-weight:700;font-size:.95rem;margin-bottom:.4rem;color:var(--rust-b)">PromptCaliper is the one control plane that kills all six.</div>
+        <p style="font-size:.82rem;color:var(--muted);line-height:1.8;">
+          Intercepts every LLM call before it leaves your infrastructure. Scoped, hashed virtual keys replace raw provider credentials — revoke one integration without touching the rest. Real-time budget enforcement blocks rogue spend before the bill arrives. Every prompt and response is logged, searchable, and auditable. Guardrails apply safety rules uniformly across every caller from a single config. LiteLLM Router fails over automatically so one provider outage isn't your outage. Semantic caching absorbs repeat traffic for free.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 1: System Architecture ── -->
+  <div class="section" id="architecture">
+    <div class="section-label">System Design</div>
+    <h2>High-Level <span>Architecture</span></h2>
+    <p class="subtitle">Three tiers — React admin console → FastAPI BFF + LiteLLM SDK → LLM providers</p>
+
+    <div class="arch-diagram">
+
+      <!-- Tier 1: Browser -->
+      <div class="arch-row">
+        <div class="arch-box border-cyan">
+          <div class="box-icon">🖥️</div>
+          <div class="box-title">React Admin Console</div>
+          <div class="box-desc">Single-page app. 11 views covering observability, gateway management, safety policies, and user admin. Rusty AI Labs design system.</div>
+          <div class="box-tags">
+            <span class="tag tag-cyan">React 19</span>
+            <span class="tag tag-cyan">Vite</span>
+            <span class="tag tag-cyan">Tailwind CSS</span>
+            <span class="tag tag-cyan">Recharts</span>
+            <span class="tag tag-muted">30s polling</span>
+            <span class="tag tag-muted">JWT auth</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Arrow down -->
+      <div class="arch-arrow">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+          <div class="line"></div>
+          <span class="label">REST JSON · Bearer JWT · 30s polling</span>
+          <div class="line"></div>
+        </div>
+      </div>
+
+      <!-- Tier 2: FastAPI -->
+      <div class="arch-row">
+        <div class="arch-box border-rust" style="flex:2">
+          <div class="box-icon">⚡</div>
+          <div class="box-title">FastAPI Backend</div>
+          <div class="box-desc">Custom BFF — handles auth, virtual key validation, rate limiting, guardrails, budget enforcement, and full request logging. Embeds LiteLLM as a Python SDK.</div>
+          <div class="box-tags">
+            <span class="tag tag-rust">FastAPI</span>
+            <span class="tag tag-rust">Python 3.12</span>
+            <span class="tag tag-rust">LiteLLM ≥1.40</span>
+            <span class="tag tag-rust">SQLAlchemy async</span>
+            <span class="tag tag-muted">APScheduler</span>
+            <span class="tag tag-muted">passlib + bcrypt</span>
+            <span class="tag tag-muted">python-jose JWT</span>
+          </div>
+        </div>
+        <div class="arch-box border-purple" style="margin-left:1rem">
+          <div class="box-icon">🗄️</div>
+          <div class="box-title">Database</div>
+          <div class="box-desc">Async SQLAlchemy. SQLite for dev. PostgreSQL for production. Append-only spend ledger for auditing.</div>
+          <div class="box-tags">
+            <span class="tag tag-purple">SQLite (dev)</span>
+            <span class="tag tag-purple">PostgreSQL 16 (prod)</span>
+            <span class="tag tag-muted">Alembic migrations</span>
+          </div>
+        </div>
+        <div class="arch-box border-yellow" style="margin-left:1rem">
+          <div class="box-icon">⚡</div>
+          <div class="box-title">Redis</div>
+          <div class="box-desc">Rate limiting counters (RPM/TPM sliding window) and LiteLLM exact/semantic response cache.</div>
+          <div class="box-tags">
+            <span class="tag tag-yellow">Redis 7</span>
+            <span class="tag tag-muted">Rate limiting</span>
+            <span class="tag tag-muted">Response cache</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Arrow down -->
+      <div class="arch-arrow">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+          <div class="line"></div>
+          <span class="label">LiteLLM Router · HTTPS · provider-specific auth</span>
+          <div class="line"></div>
+        </div>
+      </div>
+
+      <!-- Tier 3: LLM Providers -->
+      <div class="arch-row">
+        <div class="arch-box">
+          <div class="box-icon">🤖</div>
+          <div class="box-title">OpenAI</div>
+          <div class="box-desc">GPT-4o, GPT-4o-mini, GPT-3.5-turbo and more</div>
+          <div class="box-tags"><span class="tag tag-green">✓ active</span></div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">🧠</div>
+          <div class="box-title">Anthropic</div>
+          <div class="box-desc">Claude Opus, Sonnet, Haiku families</div>
+          <div class="box-tags"><span class="tag tag-green">✓ active</span></div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">☁️</div>
+          <div class="box-title">Azure OpenAI</div>
+          <div class="box-desc">Bring your own deployment endpoint</div>
+          <div class="box-tags"><span class="tag tag-muted">configurable</span></div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">💎</div>
+          <div class="box-title">Gemini / Bedrock</div>
+          <div class="box-desc">Google Gemini Pro · AWS Bedrock models</div>
+          <div class="box-tags"><span class="tag tag-muted">configurable</span></div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">🦙</div>
+          <div class="box-title">Ollama</div>
+          <div class="box-desc">Local models (Llama 3, Mistral, Phi…)</div>
+          <div class="box-tags"><span class="tag tag-muted">self-hosted</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Section 2: Request Flow ── -->
+  <div class="section" id="request-flow">
+    <div class="section-label">Lifecycle</div>
+    <h2>Request <span>Flow</span></h2>
+    <p class="subtitle">Every POST /api/v1/chat/completions passes through 8 sequential gates before reaching the LLM</p>
+
+    <div style="background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:2rem;overflow-x:auto;">
+      <div class="flow">
+
+        <div class="flow-step">
+          <div class="flow-step-box border-cyan" style="border-color:rgba(34,211,238,.4)">
+            <div class="flow-step-num" style="background:var(--cyan);color:#000">1</div>
+            <div class="flow-step-title">Auth</div>
+            <div class="flow-step-desc">Extract <code style="color:var(--cyan);font-size:.7rem">sk-ft-*</code> Bearer token. SHA-256 hash lookup. Check is_active & expiry.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-step-box border-purple" style="border-color:rgba(167,139,250,.4)">
+            <div class="flow-step-num" style="background:var(--purple)">2</div>
+            <div class="flow-step-title">Model ACL</div>
+            <div class="flow-step-desc">Check requested model is in the key's <code style="color:var(--cyan);font-size:.7rem">allowed_models</code> list (if set).</div>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-step-box border-yellow" style="border-color:rgba(245,158,11,.4)">
+            <div class="flow-step-num" style="background:var(--yellow);color:#000">3</div>
+            <div class="flow-step-title">Rate Limit</div>
+            <div class="flow-step-desc">Check RPM & TPM counters (Redis sliding window). Return 429 if exceeded.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-step-box border-rust" style="border-color:rgba(192,68,30,.5)">
+            <div class="flow-step-num">4</div>
+            <div class="flow-step-title">Budget</div>
+            <div class="flow-step-desc">Pre-call hook: <code style="color:var(--cyan);font-size:.7rem">current_spend_usd</code> vs monthly limit. Block or alert.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-step-box border-rust" style="border-color:rgba(192,68,30,.3)">
+            <div class="flow-step-num">5</div>
+            <div class="flow-step-title">Input Guards</div>
+            <div class="flow-step-desc">Keyword block · regex filter · PII redaction applied to all messages before sending.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-step-box" style="border-color:rgba(34,197,94,.4)">
+            <div class="flow-step-num" style="background:var(--green)">6</div>
+            <div class="flow-step-title">LiteLLM</div>
+            <div class="flow-step-desc">Router selects model (load-balance / latency). Checks cache first. Falls back on error.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-step-box border-rust" style="border-color:rgba(192,68,30,.3)">
+            <div class="flow-step-num">7</div>
+            <div class="flow-step-title">Output Guards</div>
+            <div class="flow-step-desc">Content filter & PII redaction applied to LLM response before returning to caller.</div>
+          </div>
+        </div>
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-step-box border-cyan" style="border-color:rgba(34,211,238,.3)">
+            <div class="flow-step-num" style="background:var(--cyan);color:#000">8</div>
+            <div class="flow-step-title">Log & Ledger</div>
+            <div class="flow-step-desc">Write <code style="color:var(--cyan);font-size:.7rem">request_log</code> + append <code style="color:var(--cyan);font-size:.7rem">spend_ledger</code>. Update key counter.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 3: Auth Flow ── -->
+  <div class="section" id="auth">
+    <div class="section-label">Security</div>
+    <h2>Auth <span>Flow</span></h2>
+    <p class="subtitle">JWT-based login with silent refresh and server-side invalidation</p>
+
+    <div style="background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:2rem;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.25rem;">
+
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:1.25rem;">
+          <div style="font-size:.75rem;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.75rem;">① First Load</div>
+          <p style="font-size:.8rem;color:var(--muted);">App calls <code style="color:var(--cyan);font-size:.75rem">GET /api/auth/me</code>. If <strong style="color:var(--red)">401</strong> → show LoginView. If <strong style="color:var(--green)">200</strong> → render main app.</p>
+        </div>
+
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:1.25rem;">
+          <div style="font-size:.75rem;font-weight:700;color:var(--rust-b);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.75rem;">② Login</div>
+          <p style="font-size:.8rem;color:var(--muted);"><code style="color:var(--cyan);font-size:.75rem">POST /api/auth/login</code> returns <code style="color:var(--cyan);font-size:.75rem">access_token</code> (15 min) + <code style="color:var(--cyan);font-size:.75rem">refresh_token</code> (7 days). Both stored in <code style="color:var(--cyan);font-size:.75rem">localStorage</code>.</p>
+        </div>
+
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:1.25rem;">
+          <div style="font-size:.75rem;font-weight:700;color:var(--yellow);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.75rem;">③ Silent Refresh</div>
+          <p style="font-size:.8rem;color:var(--muted);">Axios interceptor catches any <strong style="color:var(--red)">401</strong>. Auto-calls <code style="color:var(--cyan);font-size:.75rem">POST /api/auth/refresh</code> with refresh token. On success, retries original request. On failure, dispatches <code style="color:var(--cyan);font-size:.75rem">ft:logout</code> event.</p>
+        </div>
+
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:1.25rem;">
+          <div style="font-size:.75rem;font-weight:700;color:var(--purple);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.75rem;">④ Logout</div>
+          <p style="font-size:.8rem;color:var(--muted);"><code style="color:var(--cyan);font-size:.75rem">POST /api/auth/logout</code> stores the refresh token's JTI in a server-side blocklist. Clears <code style="color:var(--cyan);font-size:.75rem">localStorage</code>. Blocklisted tokens are rejected on any future refresh attempt.</p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 4: Features ── -->
+  <div class="section" id="features">
+    <div class="section-label">Capabilities</div>
+    <h2>Platform <span>Features</span></h2>
+    <p class="subtitle">All managed from the admin console — no config files to edit manually</p>
+
+    <div class="feature-grid">
+
+      <div class="feature-card">
+        <div class="fc-icon" style="background:rgba(192,68,30,.15)">🔑</div>
+        <h3>Virtual Keys</h3>
+        <p>Scoped API keys for users and services. Full key shown once at creation.</p>
+        <ul>
+          <li>SHA-256 hash stored — raw key never persisted</li>
+          <li>Per-key monthly budget + RPM/TPM limits</li>
+          <li>One-click rotation — new key, same settings</li>
+          <li>Assign to teams for group budgeting</li>
+        </ul>
+      </div>
+
+      <div class="feature-card">
+        <div class="fc-icon" style="background:rgba(34,197,94,.1)">🗺️</div>
+        <h3>LiteLLM Routing</h3>
+        <p>Intelligent request routing across all major LLM providers.</p>
+        <ul>
+          <li>Load balancing — least-busy or latency-based</li>
+          <li>Automatic fallbacks on provider errors</li>
+          <li>Configurable routing weights per model</li>
+          <li>Hot-reload — no restart needed after config change</li>
+        </ul>
+      </div>
+
+      <div class="feature-card">
+        <div class="fc-icon" style="background:rgba(245,158,11,.1)">💰</div>
+        <h3>Budget Control</h3>
+        <p>Monthly spend limits enforced in real time, at multiple scopes.</p>
+        <ul>
+          <li>Global org / per-team / per-key / per-model limits</li>
+          <li>Actions: block (429) · alert only · block + alert</li>
+          <li>Append-only spend ledger for full auditability</li>
+          <li>Auto-reset on 1st of month via APScheduler</li>
+        </ul>
+      </div>
+
+      <div class="feature-card">
+        <div class="fc-icon" style="background:rgba(96,165,250,.1)">🚦</div>
+        <h3>Rate Limiting</h3>
+        <p>RPM and TPM enforcement per virtual key or team.</p>
+        <ul>
+          <li>Sliding window algorithm</li>
+          <li>In-memory counters for dev (single process)</li>
+          <li>Redis counters for prod (multi-process safe)</li>
+          <li>Live current-usage visible in admin console</li>
+        </ul>
+      </div>
+
+      <div class="feature-card">
+        <div class="fc-icon" style="background:rgba(248,113,113,.1)">🛡️</div>
+        <h3>Guardrails</h3>
+        <p>Content filtering applied before and/or after every LLM call.</p>
+        <ul>
+          <li>Keyword block — exact word list</li>
+          <li>Regex filter — arbitrary pattern</li>
+          <li>PII redaction — email, SSN, phone, card numbers</li>
+          <li>Content filter — violence/adult category flags</li>
+        </ul>
+      </div>
+
+      <div class="feature-card">
+        <div class="fc-icon" style="background:rgba(34,211,238,.1)">⚡</div>
+        <h3>Response Caching</h3>
+        <p>LiteLLM-managed cache cuts latency and provider costs.</p>
+        <ul>
+          <li>Local (in-memory) for dev</li>
+          <li>Redis exact-match for prod</li>
+          <li>Redis semantic cache — embedding similarity</li>
+          <li>Configurable TTL and similarity threshold</li>
+        </ul>
+      </div>
+
+      <div class="feature-card">
+        <div class="fc-icon" style="background:rgba(167,139,250,.1)">📊</div>
+        <h3>Observability</h3>
+        <p>Full audit log of every request — prompt, response, tokens, cost, latency.</p>
+        <ul>
+          <li>Paginated log viewer with inline expansion</li>
+          <li>Filters: status, model, cache hit, search</li>
+          <li>Analytics: 6-month team spend, 7-day token trend</li>
+          <li>Model cost distribution pie chart</li>
+        </ul>
+      </div>
+
+      <div class="feature-card">
+        <div class="fc-icon" style="background:rgba(251,191,36,.1)">🔔</div>
+        <h3>Alerts</h3>
+        <p>Threshold-based notifications on any metric.</p>
+        <ul>
+          <li>Metrics: spend $, spend %, RPM, error rate, p95 latency</li>
+          <li>Scope: global / team / key / model</li>
+          <li>Channels: log · email · webhook · Slack</li>
+          <li>Evaluated every 5 minutes by APScheduler</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Section vs LiteLLM ── -->
+  <div class="section" id="vs-litellm">
+    <div class="section-label">Differentiation</div>
+    <h2>PromptCaliper <span>vs LiteLLM</span></h2>
+    <p class="subtitle">PromptCaliper is built on LiteLLM — not a replacement for it. Here is exactly what each layer brings.</p>
+
+    <!-- ── FOUNDATION BANNER ── -->
+    <div style="background:linear-gradient(135deg,rgba(34,211,238,.08) 0%,rgba(192,68,30,.08) 100%);border:1px solid rgba(34,211,238,.3);border-radius:14px;padding:1.75rem 2rem;margin-bottom:2rem;position:relative;overflow:hidden;">
+      <div style="position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--cyan),var(--rust-b));"></div>
+      <div style="display:flex;align-items:flex-start;gap:1.25rem;flex-wrap:wrap;">
+        <div style="font-size:2.5rem;flex-shrink:0;line-height:1">🏗️</div>
+        <div style="flex:1;min-width:220px">
+          <div style="font-size:1.1rem;font-weight:800;letter-spacing:-.3px;margin-bottom:.5rem;">
+            PromptCaliper is <span style="color:var(--cyan)">powered by LiteLLM</span> — <span style="color:var(--rust-b)">not a fork, not a competitor.</span>
+          </div>
+          <p style="font-size:.84rem;color:var(--muted);line-height:1.8;max-width:780px;">
+            The <code style="color:var(--cyan);font-size:.78rem">litellm</code> Python SDK is embedded directly inside the PromptCaliper FastAPI backend. Every chat completion request flows through LiteLLM's router for provider normalisation, load balancing, retries, caching, and cost callbacks — <strong style="color:var(--text)">exactly as if you were running LiteLLM itself.</strong> PromptCaliper layers governance, security, and observability on top: an admin console, hashed virtual keys, multi-scope budget enforcement, an append-only spend ledger, guardrails, and a native alert engine — all without a paid LiteLLM Enterprise licence.
+          </p>
+          <div style="display:flex;flex-wrap:wrap;gap:.6rem;margin-top:1rem;">
+            <span style="background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3);color:var(--cyan);font-size:.72rem;font-weight:700;padding:.25rem .7rem;border-radius:999px;font-family:monospace;">litellm ≥ 1.40 SDK embedded</span>
+            <span style="background:rgba(192,68,30,.1);border:1px solid rgba(192,68,30,.3);color:var(--rust-b);font-size:.72rem;font-weight:700;padding:.25rem .7rem;border-radius:999px;">100+ providers via LiteLLM Router</span>
+            <span style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:var(--green);font-size:.72rem;font-weight:700;padding:.25rem .7rem;border-radius:999px;">Zero LiteLLM Enterprise licence needed</span>
+            <span style="background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.3);color:var(--purple);font-size:.72rem;font-weight:700;padding:.25rem .7rem;border-radius:999px;">OpenAI-compatible API surface preserved</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PRICING CONTEXT NOTE ── -->
+    <div style="background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.3);border-radius:10px;padding:.9rem 1.25rem;margin-bottom:1.5rem;font-size:.8rem;display:flex;gap:.75rem;align-items:flex-start;">
+      <span style="font-size:1rem;flex-shrink:0">💡</span>
+      <div style="color:var(--muted);line-height:1.7;">
+        <strong style="color:var(--yellow)">LiteLLM Pricing Context:</strong> LiteLLM has a generous OSS tier but several features in this comparison — including guardrails, SSO, audit logs, RBAC, and Prometheus metrics — are gated behind <strong style="color:var(--text)">LiteLLM Enterprise at $250–$30,000 / year</strong>. PromptCaliper ships equivalent capabilities as <strong style="color:var(--text)">fully open-source with zero licensing cost.</strong> The <code style="color:var(--cyan);font-size:.75rem">🔒 Ent.</code> marker below indicates features that require a paid LiteLLM plan.
+      </div>
+    </div>
+
+    <!-- ── COMPARISON TABLE ── -->
+    <div class="vs-table-wrap">
+      <table class="vs-table">
+        <thead>
+          <tr>
+            <th style="width:26%">Capability</th>
+            <th style="width:37%">PromptCaliper (OSS, self-hosted)</th>
+            <th style="width:37%">LiteLLM — accurate as of 2025</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- ── CORE ROUTING (LiteLLM strength) ── -->
+          <tr style="background:rgba(34,211,238,.03)">
+            <td colspan="3" style="padding:.5rem 1.25rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);border-top:none;">Core Routing — powered by LiteLLM in both cases</td>
+          </tr>
+          <tr>
+            <td><strong>Multi-provider routing</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> LiteLLM Router embedded — load balance, latency-based or weighted, retries, fallback; model weights editable in UI</td>
+            <td class="col-ll"><span class="vs-icon-yes">✓</span> LiteLLM's core strength — 100+ providers, 8ms P95 at 1k RPS, automatic reroute on rate limit</td>
+          </tr>
+          <tr>
+            <td><strong>Semantic &amp; exact caching</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> LiteLLM cache delegated (local / Redis / semantic); TTL + similarity threshold configurable in admin UI; hit rate surfaced in dashboard</td>
+            <td class="col-ll"><span class="vs-icon-yes">✓</span> Native in LiteLLM — exact-match and embedding-similarity cache backed by Redis</td>
+          </tr>
+          <tr>
+            <td><strong>OpenAI-compatible API</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Single <code style="color:var(--cyan);font-size:.75rem">POST /api/v1/chat/completions</code> endpoint — drop-in for any OpenAI SDK caller</td>
+            <td class="col-ll"><span class="vs-icon-yes">✓</span> LiteLLM normalises all providers to OpenAI schema — /chat/completions, /embeddings, /images and more</td>
+          </tr>
+          <tr>
+            <td><strong>Cost calculation</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Token cost per call from LiteLLM callbacks; stored in <code style="color:var(--cyan);font-size:.75rem">request_logs</code> and <code style="color:var(--cyan);font-size:.75rem">spend_ledger</code> with full breakdown</td>
+            <td class="col-ll"><span class="vs-icon-yes">✓</span> Per-call cost tracked across all providers via LiteLLM callbacks — basis for all spend tracking</td>
+          </tr>
+
+          <!-- ── GOVERNANCE (PromptCaliper advantage) ── -->
+          <tr style="background:rgba(192,68,30,.03)">
+            <td colspan="3" style="padding:.5rem 1.25rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--rust-b);border-top:none;">Governance — where PromptCaliper extends beyond LiteLLM</td>
+          </tr>
+          <tr>
+            <td><strong>Virtual key security</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> SHA-256 hashed — raw value shown once, never stored. Per-key allowed-model ACL. One-click rotation.</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> Virtual keys in proxy mode with granular permissions and rotation. Keys stored hashed in DB but raw value accessible via API for existing keys. No per-key model ACL.</td>
+          </tr>
+          <tr>
+            <td><strong>Budget scoping</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Four simultaneous scopes: global org, team, virtual key, model — all enforced in a pre-call hook before the LLM is ever contacted</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> Per-key (<code style="color:var(--cyan);font-size:.75rem">max_budget</code>) and per-team budgets supported; model-specific budgets per key also available. However, global-org cap and a unified pre-call block across all four scopes simultaneously requires custom config.</td>
+          </tr>
+          <tr>
+            <td><strong>Append-only spend ledger</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Immutable <code style="color:var(--cyan);font-size:.75rem">spend_ledger</code> table — every cost event is a new row; counters are derived aggregates, never the source of truth</td>
+            <td class="col-ll"><span class="vs-icon-no">✗</span> No append-only accounting ledger. Spend tracked via mutable counters on key/team records. Audit logs (🔒 Ent.) track API calls for compliance but are not an immutable financial ledger.</td>
+          </tr>
+          <tr>
+            <td><strong>Rate limiting</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> RPM + TPM per virtual key; DB-backed sliding window; Redis for multi-worker; live current-minute counters visible per key in admin console</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> RPM + TPM limits per key and team supported. Redis required for multi-worker consistency (same as PromptCaliper). No built-in live counter view — requires querying the API or external monitoring.</td>
+          </tr>
+          <tr>
+            <td><strong>Team management</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Teams with monthly budget, configurable breach action (block / alert / both), key assignment, and spend roll-up in analytics</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> Teams with per-team budgets, RBAC (🔒 Ent.), and separate Langfuse logging per team. Spend roll-up exists via <code style="color:var(--cyan);font-size:.75rem">/spend/report</code> API but not surfaced as a built-in analytics chart.</td>
+          </tr>
+
+          <!-- ── OBSERVABILITY ── -->
+          <tr style="background:rgba(96,165,250,.03)">
+            <td colspan="3" style="padding:.5rem 1.25rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);border-top:none;">Observability</td>
+          </tr>
+          <tr>
+            <td><strong>Built-in prompt/response log</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Every call stored natively: full messages JSON, response content, tokens, cost, latency, cache hit, guardrail trigger — searchable and filterable in the admin console with per-request inspection modal</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> Comprehensive request/response logging exists but is primarily routed to pluggable external callbacks (Langfuse, Helicone, OpenTelemetry, etc.). No built-in searchable log viewer inside LiteLLM's own UI.</td>
+          </tr>
+          <tr>
+            <td><strong>Analytics dashboard</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> All-in-one: 6-month org spend by team, 7-day token economics (input vs output tokens), model cost distribution pie, KPI cards (requests, latency p95, cache hit rate, cost)</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> Admin UI includes usage, token burn rate, and latency charts. Daily activity breakdown with per-model and per-key granularity. Lacks team-attributed spend trend and input vs output token split.</td>
+          </tr>
+          <tr>
+            <td><strong>Alert rules engine</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Threshold rules on spend $, spend %, RPM, error rate, p95 latency — scoped to global / team / key / model — notify via log / email / webhook / Slack; evaluated every 5 min by APScheduler</td>
+            <td class="col-ll"><span class="vs-icon-no">✗</span> No native threshold-based alert rules. Prometheus metrics (🔒 Ent.) can be scraped for external alerting (Grafana, PagerDuty) but no built-in rule engine or notification dispatch.</td>
+          </tr>
+
+          <!-- ── SAFETY ── -->
+          <tr style="background:rgba(167,139,250,.03)">
+            <td colspan="3" style="padding:.5rem 1.25rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--purple);border-top:none;">Safety &amp; Compliance</td>
+          </tr>
+          <tr>
+            <td><strong>Guardrails</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Four built-in types: keyword block, regex filter, PII redaction (email / SSN / phone / card), content category filter — applied pre- and post-LLM; UI toggle + live test panel. Zero extra licence cost.</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> Guardrails exist (🔒 Ent. $250+/mo): banned keywords, secret detection/redaction, LLM Guard, LlamaGuard, Google Text Moderation. PII-pattern redaction (email, SSN, phone) is not a built-in type — requires LLM Guard or custom hook. No test panel.</td>
+          </tr>
+          <tr>
+            <td><strong>Audit &amp; compliance logs</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Every request stored in <code style="color:var(--cyan);font-size:.75rem">request_logs</code> with full context and in the append-only <code style="color:var(--cyan);font-size:.75rem">spend_ledger</code>. Retention controlled by your own database. No external service dependency.</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> Audit logs with retention policies available (🔒 Ent.). SOC-2 Type 2 / ISO 27001 certified (for managed hosted option). OSS tier has no built-in retention or compliance audit trail.</td>
+          </tr>
+          <tr>
+            <td><strong>Auth — JWT with refresh rotation</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> 15-min access tokens + 7-day refresh rotation; server-side JTI blocklist on logout; silent refresh via Axios interceptor — zero third-party dependency</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> JWT authentication supported (🔒 Ent.) primarily for SSO/admin UI access. No dual-token rotation pattern or server-side invalidation blocklist.</td>
+          </tr>
+
+          <!-- ── DEPLOYMENT ── -->
+          <tr style="background:rgba(34,197,94,.03)">
+            <td colspan="3" style="padding:.5rem 1.25rem;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--green);border-top:none;">Deployment &amp; Cost</td>
+          </tr>
+          <tr>
+            <td><strong>Self-hosted — full feature set</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> All features available on Docker Compose — SQLite for dev (no Redis/Postgres required to start), PostgreSQL + Redis for prod. MIT licence. Zero licensing cost.</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> OSS proxy is fully self-hosted (MIT). But guardrails, SSO, JWT auth, RBAC, audit logs, and Prometheus metrics require the Enterprise licence ($250–$30,000/yr). Redis + PostgreSQL required even in dev for multi-tenant features.</td>
+          </tr>
+          <tr>
+            <td><strong>Admin UI — all-in-one</strong></td>
+            <td class="col-ft"><span class="vs-icon-yes">✓</span> Purpose-built React console with 11 integrated views: observability, request logs, analytics, virtual keys, budgets, rate limits, model registry, guardrails, cache, alerts, user admin — all in one deployment</td>
+            <td class="col-ll"><span class="vs-icon-partial">~</span> Built-in proxy dashboard covers key management, model config, spend overview, load balancing config, and basic usage charts. Does not include guardrail test panel, request inspection modal, token economics split, or alert rule builder.</td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Legend -->
+    <div style="display:flex;gap:1.5rem;flex-wrap:wrap;font-size:.75rem;color:var(--muted);margin:-.25rem 0 1.5rem;padding:.5rem .25rem;">
+      <span><span class="vs-icon-yes">✓</span> Fully supported</span>
+      <span><span class="vs-icon-partial">~</span> Partially / with caveats</span>
+      <span><span class="vs-icon-no">✗</span> Not available</span>
+      <span style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);color:var(--yellow);padding:.1rem .5rem;border-radius:4px;font-family:monospace;">🔒 Ent.</span><span> = LiteLLM Enterprise paid feature</span>
+    </div>
+
+    <!-- ── SUMMARY BOXES ── -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.25rem;margin-top:.5rem;">
+
+      <div style="background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.25);border-radius:12px;padding:1.25rem;">
+        <div style="font-weight:700;font-size:.9rem;color:var(--cyan);margin-bottom:.5rem;">🔩 What LiteLLM Contributes</div>
+        <p style="font-size:.78rem;color:var(--muted);margin-bottom:.6rem;line-height:1.6;">The battle-tested engine inside every PromptCaliper deployment:</p>
+        <ul style="list-style:none;font-size:.8rem;color:var(--muted);line-height:1.9;">
+          <li>→ Normalised OpenAI API across 100+ providers</li>
+          <li>→ Latency-based, weighted &amp; load-balanced routing</li>
+          <li>→ Automatic retries and provider failover</li>
+          <li>→ Exact-match &amp; semantic response caching</li>
+          <li>→ Per-call cost callbacks across all providers</li>
+          <li>→ Streaming SSE support for all providers</li>
+          <li>→ 8ms P95 latency at 1,000 RPS</li>
+        </ul>
+      </div>
+
+      <div style="background:rgba(192,68,30,.06);border:1px solid rgba(192,68,30,.25);border-radius:12px;padding:1.25rem;">
+        <div style="font-weight:700;font-size:.9rem;color:var(--rust-b);margin-bottom:.5rem;">🏗️ What PromptCaliper Adds</div>
+        <p style="font-size:.78rem;color:var(--muted);margin-bottom:.6rem;line-height:1.6;">The enterprise governance layer — free, self-hosted, no licence required:</p>
+        <ul style="list-style:none;font-size:.8rem;color:var(--muted);line-height:1.9;">
+          <li>→ SHA-256 hashed virtual keys with model ACL</li>
+          <li>→ Real-time multi-scope budget enforcement (4 levels)</li>
+          <li>→ Append-only spend ledger (immutable cost audit trail)</li>
+          <li>→ Built-in PII redaction &amp; guardrails — no LLM Guard needed</li>
+          <li>→ Native alert rules → email / webhook / Slack</li>
+          <li>→ All-in-one admin console with request inspector</li>
+          <li>→ JWT refresh rotation + server-side invalidation</li>
+        </ul>
+      </div>
+
+      <div style="background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.25);border-radius:12px;padding:1.25rem;">
+        <div style="font-weight:700;font-size:.9rem;color:var(--green);margin-bottom:.5rem;">✦ Choose PromptCaliper when…</div>
+        <p style="font-size:.78rem;color:var(--muted);margin-bottom:.6rem;line-height:1.6;">PromptCaliper is the right fit if you need:</p>
+        <ul style="list-style:none;font-size:.8rem;color:var(--muted);line-height:1.9;">
+          <li>→ LiteLLM Enterprise features at zero licensing cost</li>
+          <li>→ Teams with independent budgets &amp; chargeback</li>
+          <li>→ Compliance-grade prompt/response audit trail</li>
+          <li>→ Scoped, revocable keys for third-party integrations</li>
+          <li>→ PII redaction without a third-party LLM guard service</li>
+          <li>→ Air-gapped, regulated, or fully self-contained deployments</li>
+          <li>→ One console for routing + safety + spend + observability</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Section 5: Data Model ── -->
+  <div class="section" id="data-model">
+    <div class="section-label">Database</div>
+    <h2>Core <span>Data Model</span></h2>
+    <p class="subtitle">Key tables — SQLite for dev, PostgreSQL 16 for production</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Table</th>
+            <th>Purpose</th>
+            <th>Key Columns</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>admin_users</code></td>
+            <td>Console login accounts</td>
+            <td><code>username</code>, <code>hashed_password</code>, <code>is_superadmin</code></td>
+          </tr>
+          <tr>
+            <td><code>virtual_keys</code></td>
+            <td>API keys issued to callers</td>
+            <td><code>key_hash</code> (SHA-256), <code>key_prefix</code>, <code>monthly_budget_usd</code>, <code>current_spend_usd</code>, <code>rpm_limit</code></td>
+          </tr>
+          <tr>
+            <td><code>teams</code></td>
+            <td>Org departments / groups</td>
+            <td><code>name</code>, <code>monthly_budget_usd</code>, <code>budget_action</code></td>
+          </tr>
+          <tr>
+            <td><code>model_configs</code></td>
+            <td>Registered LLM endpoints</td>
+            <td><code>litellm_model_name</code>, <code>provider</code>, <code>api_key_env_var</code>, <code>routing_weight</code>, <code>cost_per_input_token</code></td>
+          </tr>
+          <tr>
+            <td><code>request_logs</code></td>
+            <td>Full audit trail per call</td>
+            <td><code>prompt_messages</code> (JSON), <code>response_content</code>, <code>cost_usd</code>, <code>latency_ms</code>, <code>cache_hit</code>, <code>guardrail_triggered</code></td>
+          </tr>
+          <tr>
+            <td><code>spend_ledger</code></td>
+            <td><strong>Append-only</strong> cost events</td>
+            <td><code>virtual_key_id</code>, <code>team_id</code>, <code>model_config_id</code>, <code>amount_usd</code>, <code>period_month</code></td>
+          </tr>
+          <tr>
+            <td><code>budget_policies</code></td>
+            <td>Configurable spend limits</td>
+            <td><code>scope_type</code> (global/team/key/model), <code>monthly_limit_usd</code>, <code>action_on_breach</code></td>
+          </tr>
+          <tr>
+            <td><code>guardrail_configs</code></td>
+            <td>Content filtering rules</td>
+            <td><code>guardrail_type</code>, <code>applies_to</code> (input/output/both), <code>config_json</code>, <code>action_on_trigger</code></td>
+          </tr>
+          <tr>
+            <td><code>cache_configs</code></td>
+            <td>Singleton cache settings</td>
+            <td><code>cache_type</code>, <code>redis_url</code>, <code>ttl_seconds</code>, <code>semantic_similarity_threshold</code></td>
+          </tr>
+          <tr>
+            <td><code>alert_rules</code></td>
+            <td>Notification thresholds</td>
+            <td><code>metric</code>, <code>threshold_value</code>, <code>scope_type</code>, <code>notification_channel</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Spend ledger note -->
+    <div style="margin-top:1rem;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);border-radius:10px;padding:1rem 1.25rem;display:flex;gap:.75rem;font-size:.82rem;">
+      <span style="font-size:1.1rem">💡</span>
+      <div>
+        <strong style="color:var(--yellow)">Spend ledger is append-only.</strong>
+        <span style="color:var(--muted)"> Rows are never updated or deleted — it's the authoritative cost audit trail. <code style="color:var(--cyan);font-size:.75rem">virtual_key.current_spend_usd</code> is a fast denormalised counter for real-time budget enforcement. Authoritative totals are always aggregated from the ledger.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 6: Deployment ── -->
+  <div class="section" id="deploy">
+    <div class="section-label">Operations</div>
+    <h2><span>Deployment</span> Options</h2>
+    <p class="subtitle">Docker Compose for both dev and production — only the .env changes</p>
+
+    <div class="deploy-grid">
+
+      <div class="deploy-card dev">
+        <h3>🧪 Local Development</h3>
+        <div class="dc-meta">SQLite · in-memory rate limits · hot-reload · Swagger UI at /docs</div>
+        <pre><span class="comment"># 1. Configure</span>
+<span class="cmd">cp gateway/.env.example gateway/.env</span>
+<span class="comment"># set JWT_SECRET_KEY, SUPERADMIN_PASSWORD,</span>
+<span class="comment"># and at least one LLM provider key</span>
+
+<span class="comment"># 2. Start</span>
+<span class="cmd">docker compose -f docker-compose.dev.yml up --build</span>
+
+<span class="comment"># Frontend → http://localhost:5173</span>
+<span class="comment"># API      → http://localhost:8000</span>
+<span class="comment"># Swagger  → http://localhost:8000/docs</span></pre>
+      </div>
+
+      <div class="deploy-card prod">
+        <h3>🚀 Production</h3>
+        <div class="dc-meta">PostgreSQL 16 · Redis 7 · multi-worker gateway · nginx reverse proxy · port 80</div>
+        <pre><span class="comment"># 1. Configure</span>
+<span class="cmd">cp .env.example .env</span>
+<span class="comment"># generate: openssl rand -hex 32</span>
+
+<span class="comment"># 2. Start</span>
+<span class="cmd">docker compose -f docker-compose.prod.yml up --build -d</span>
+
+<span class="comment"># Admin console → http://your-server</span>
+<span class="comment"># API (proxied) → http://your-server/api/</span></pre>
+      </div>
+
+    </div>
+
+    <!-- Service map -->
+    <div style="margin-top:1.5rem;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:1.5rem;">
+      <div style="font-size:.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:1rem;">Production Service Map</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;font-size:.8rem;">
+        <div style="background:rgba(34,211,238,.05);border:1px solid rgba(34,211,238,.2);border-radius:8px;padding:.9rem;">
+          <div style="color:var(--cyan);font-weight:700;margin-bottom:.3rem;">nginx :80/:443</div>
+          <div style="color:var(--muted)">Routes /api/* → gateway:8000<br>/  → frontend:80</div>
+        </div>
+        <div style="background:rgba(192,68,30,.05);border:1px solid rgba(192,68,30,.2);border-radius:8px;padding:.9rem;">
+          <div style="color:var(--rust-b);font-weight:700;margin-bottom:.3rem;">gateway :8000</div>
+          <div style="color:var(--muted)">FastAPI · 2 uvicorn workers<br>LiteLLM Router embedded</div>
+        </div>
+        <div style="background:rgba(167,139,250,.05);border:1px solid rgba(167,139,250,.2);border-radius:8px;padding:.9rem;">
+          <div style="color:var(--purple);font-weight:700;margin-bottom:.3rem;">postgres :5432</div>
+          <div style="color:var(--muted)">Primary datastore<br>persistent volume</div>
+        </div>
+        <div style="background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:.9rem;">
+          <div style="color:var(--yellow);font-weight:700;margin-bottom:.3rem;">redis :6379</div>
+          <div style="color:var(--muted)">Rate limit counters<br>Response cache store</div>
+        </div>
+        <div style="background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:.9rem;">
+          <div style="color:var(--green);font-weight:700;margin-bottom:.3rem;">frontend :80</div>
+          <div style="color:var(--muted)">nginx serving pre-built<br>Vite React bundle</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Section 7: Tech Stack ── -->
+  <div class="section" id="stack">
+    <div class="section-label">Technology</div>
+    <h2>Full <span>Stack</span></h2>
+    <p class="subtitle">Chosen for async performance, operational simplicity, and a single database URL to switch between dev and prod</p>
+
+    <div class="stack-list">
+      <div class="stack-chip"><span>⚛️</span> <div><div>React 19 + Vite</div><div class="layer">frontend</div></div></div>
+      <div class="stack-chip"><span>🎨</span> <div><div>Tailwind CSS</div><div class="layer">styling</div></div></div>
+      <div class="stack-chip"><span>📊</span> <div><div>Recharts</div><div class="layer">charts</div></div></div>
+      <div class="stack-chip"><span>🪝</span> <div><div>Axios + usePolling</div><div class="layer">data fetching</div></div></div>
+      <div class="stack-chip"><span>⚡</span> <div><div>FastAPI</div><div class="layer">API framework</div></div></div>
+      <div class="stack-chip"><span>🤖</span> <div><div>LiteLLM ≥ 1.40</div><div class="layer">LLM routing</div></div></div>
+      <div class="stack-chip"><span>🗄️</span> <div><div>SQLAlchemy async</div><div class="layer">ORM</div></div></div>
+      <div class="stack-chip"><span>🔄</span> <div><div>Alembic</div><div class="layer">migrations</div></div></div>
+      <div class="stack-chip"><span>🔐</span> <div><div>python-jose + passlib</div><div class="layer">auth</div></div></div>
+      <div class="stack-chip"><span>⏰</span> <div><div>APScheduler</div><div class="layer">cron jobs</div></div></div>
+      <div class="stack-chip"><span>⚡</span> <div><div>Redis 7</div><div class="layer">cache + rate limits</div></div></div>
+      <div class="stack-chip"><span>🐘</span> <div><div>PostgreSQL 16</div><div class="layer">prod database</div></div></div>
+      <div class="stack-chip"><span>🐳</span> <div><div>Docker Compose</div><div class="layer">deployment</div></div></div>
+      <div class="stack-chip"><span>🔀</span> <div><div>nginx 1.25</div><div class="layer">reverse proxy</div></div></div>
+    </div>
+  </div>
+
+  <!-- ── Section 8: Changelog & Architecture Impact ── -->
+  <div class="section" id="changelog">
+    <div class="section-label">Evolution</div>
+    <h2>Recent Changes &amp; <span>Architecture Impact</span></h2>
+    <p class="subtitle">What changed, why it changed, and how it affects the system design</p>
+
+    <div class="changelog-list">
+
+      <div class="cl-entry">
+        <div class="cl-meta">
+          <span class="cl-date">2025-03 · commit 2c522a5</span>
+          <span class="cl-badge" style="background:rgba(96,165,250,.15);color:var(--blue)">Analytics</span>
+        </div>
+        <h4>AnalyticsView — Enhanced Token Economics &amp; Spend Visibility</h4>
+        <p>The Analytics view was overhauled to surface deeper token-level economics and make team spend attribution more actionable.</p>
+        <ul>
+          <li>7-day token economics chart now explicitly separates <strong>input tokens</strong> vs <strong>output tokens</strong> — critical because output tokens are 3–5× more expensive per token across all providers</li>
+          <li>6-month org spend bar chart now groups by team, enabling finance chargeback without external BI tools</li>
+          <li>Model cost distribution pie chart added — shows which models consume the highest dollar share so teams can make cost/quality tradeoff decisions</li>
+          <li><strong>Architecture impact:</strong> The <code style="color:var(--cyan);font-size:.75rem">/api/analytics</code> router now aggregates directly from the <code style="color:var(--cyan);font-size:.75rem">spend_ledger</code> table (the append-only source of truth) rather than from mutable key counters — ensuring consistency between what the ledger records and what analytics shows. The <code style="color:var(--cyan);font-size:.75rem">request_logs</code> table is used for latency and token trend data</li>
+        </ul>
+      </div>
+
+      <div class="cl-entry">
+        <div class="cl-meta">
+          <span class="cl-date">2025-03 · commit 9c7d243</span>
+          <span class="cl-badge" style="background:rgba(192,68,30,.15);color:var(--rust-b)">Workflow</span>
+        </div>
+        <h4>Updated Request Workflow — Guardrail Trigger Visibility</h4>
+        <p>The 8-step request pipeline was tightened to ensure guardrail trigger events are visible across the full audit trail, not just in the guardrail log.</p>
+        <ul>
+          <li><code style="color:var(--cyan);font-size:.75rem">guardrail_triggered</code> flag is now written to <code style="color:var(--cyan);font-size:.75rem">request_logs</code> for every call — a triggered-but-passed (flag action) entry is distinguishable from a clean pass</li>
+          <li>Blocked requests (guardrail action = <code style="color:var(--cyan);font-size:.75rem">block</code>) now log a 400-status entry before returning — ensuring rejected requests appear in the audit log and analytics error-rate counters</li>
+          <li>PII redaction events in both input and output phases are captured in the log metadata — supporting compliance evidence that PII was actively removed</li>
+          <li><strong>Architecture impact:</strong> Step 5 (Input Guards) and Step 7 (Output Guards) now always write to <code style="color:var(--cyan);font-size:.75rem">request_logs</code> regardless of the guardrail action. Step 8 (Log &amp; Ledger) now reads the guardrail state accumulated in the request context object and persists it atomically with the rest of the log entry</li>
+        </ul>
+      </div>
+
+      <div class="cl-entry">
+        <div class="cl-meta">
+          <span class="cl-date">2025-03 · commit 7adee31</span>
+          <span class="cl-badge" style="background:rgba(167,139,250,.15);color:var(--purple)">UI / Design</span>
+        </div>
+        <h4>Design System Refresh — Rusty AI Labs Visual Language</h4>
+        <p>The admin console's visual language was updated across all views for consistency and readability.</p>
+        <ul>
+          <li>CSS custom property system (<code style="color:var(--cyan);font-size:.75rem">RustyStyles.jsx</code>) standardised — all colour tokens, spacing, and typography now flow from a single source</li>
+          <li>Dark/light theme toggle updated to respect OS preference on first load via <code style="color:var(--cyan);font-size:.75rem">prefers-color-scheme</code> media query</li>
+          <li>Card hover states, border accents, and badge chips made consistent across Virtual Keys, Models, Guardrails, and Alerts views</li>
+          <li><strong>Architecture impact:</strong> No backend changes. The <code style="color:var(--cyan);font-size:.75rem">ThemeContext</code> in the frontend now controls a single <code style="color:var(--cyan);font-size:.75rem">data-theme</code> attribute on <code style="color:var(--cyan);font-size:.75rem">&lt;html&gt;</code> — CSS variables cascade from there, eliminating the need for per-component theme conditionals</li>
+        </ul>
+      </div>
+
+      <div class="cl-entry">
+        <div class="cl-meta">
+          <span class="cl-date">2025-03 · commit 23e54b8</span>
+          <span class="cl-badge" style="background:rgba(34,197,94,.15);color:var(--green)">Brand</span>
+        </div>
+        <h4>Brand Website Link — Navigation &amp; Identity</h4>
+        <p>Added brand website link to the admin console navigation for product identity and support access.</p>
+        <ul>
+          <li>Navigation bar updated to include the Rusty AI Labs brand link</li>
+          <li>Logo / favicon wired to <code style="color:var(--cyan);font-size:.75rem">public/promptcaliper.svg</code> for consistent browser tab identity</li>
+          <li><strong>Architecture impact:</strong> Static asset only — no backend change. The SVG is served directly by Vite in dev and by the nginx frontend container in production</li>
+        </ul>
+      </div>
+
+      <div class="cl-entry" style="border-left-color:var(--cyan)">
+        <div class="cl-meta">
+          <span class="cl-date">Planned / Roadmap</span>
+          <span class="cl-badge" style="background:rgba(34,211,238,.12);color:var(--cyan)">Upcoming</span>
+        </div>
+        <h4>Architecture Considerations for Future Milestones</h4>
+        <p>Items under active consideration that would touch the core architecture:</p>
+        <ul>
+          <li><strong>Streaming support end-to-end:</strong> LiteLLM supports SSE streaming; the FastAPI layer would need to proxy <code style="color:var(--cyan);font-size:.75rem">StreamingResponse</code> and defer log/ledger write to a background task to avoid blocking the stream</li>
+          <li><strong>Multi-tenant namespacing:</strong> Adding a <code style="color:var(--cyan);font-size:.75rem">tenant_id</code> FK across all major tables would allow the gateway to serve multiple isolated orgs from a single deployment — a read-path filter change rather than a schema change</li>
+          <li><strong>Webhook outbound callbacks:</strong> Alert channel currently sends fire-and-forget HTTP POST; moving this to an async task queue (Celery or asyncio background tasks) would decouple alert latency from the 5-min APScheduler cycle</li>
+          <li><strong>RBAC on virtual keys:</strong> Extend the <code style="color:var(--cyan);font-size:.75rem">virtual_keys</code> table with a <code style="color:var(--cyan);font-size:.75rem">role</code> column to support read-only vs write-capable keys for different integration patterns</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  PromptCaliper v2.0 — AI Gateway &amp; Observability Platform &nbsp;·&nbsp;
+  Built with LiteLLM, FastAPI, React 19 &nbsp;·&nbsp;
+  MIT License
+</footer>
+
+</body>
+</html>
