@@ -35,34 +35,8 @@ is acceptable. If sub-second consistency is ever required, replace the TTL cache
 with a Redis-backed pub/sub invalidation.
 """
 
+from gateway.firestore_store import FirestoreStore
 import time
-
-from sqlalchemy import Boolean, Integer
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from gateway.db.base import Base
-
-
-class SystemConfig(Base):
-    """Singleton runtime config row — only id=1 ever exists.
-
-    Stores superadmin-controlled flags that must survive process restarts
-    (stored in DB) but must also be readable on the hot LLM-request path
-    without a DB round-trip (served from TTL cache).
-    """
-
-    __tablename__ = "system_config"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-
-    # When True, full prompt messages and LLM response content are written to
-    # the request_logs table on every call. Keep False in production unless
-    # actively debugging — enabling this stores potentially sensitive user
-    # content in the database.
-    log_prompt_content: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +50,7 @@ _cache_expiry: float = 0.0         # monotonic timestamp after which cache is st
 _CACHE_TTL_SECONDS: float = 10.0   # re-query DB at most once every 10 s per worker
 
 
-async def get_log_prompt_content(db: AsyncSession) -> bool:
+def get_log_prompt_content(db: FirestoreStore) -> bool:
     """Return the current log_prompt_content flag using an in-process TTL cache.
 
     Callers on the hot path (e.g. the logging callback) should pass in their
@@ -93,7 +67,7 @@ async def get_log_prompt_content(db: AsyncSession) -> bool:
     if _cached_value is not None and now < _cache_expiry:
         return _cached_value
 
-    config = await db.get(SystemConfig, 1)
+    config = db.get("system_config", 1)
     value = config.log_prompt_content if config else False
     _cached_value = value
     _cache_expiry = now + _CACHE_TTL_SECONDS

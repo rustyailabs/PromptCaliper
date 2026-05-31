@@ -5,8 +5,6 @@ from threading import Lock
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.auth.schemas import AdminUserResponse, LoginRequest, RefreshRequest, TokenResponse
 from gateway.auth.service import (
@@ -19,7 +17,7 @@ from gateway.auth.service import (
 )
 from gateway.db.session import get_db
 from gateway.dependencies import get_current_user
-from gateway.models.admin_user import AdminUser
+from gateway.firestore_store import FirestoreObject, FirestoreStore
 
 router = APIRouter()
 
@@ -53,16 +51,16 @@ def _check_login_rate_limit(ip: str) -> None:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+def login(body: LoginRequest, request: Request, db: FirestoreStore = Depends(get_db)):
     client_ip = request.client.host if request.client else "unknown"
     _check_login_rate_limit(client_ip)
 
-    user = await authenticate_user(body.username, body.password, db)
+    user = authenticate_user(body.username, body.password, db)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     user.last_login_at = datetime.now(timezone.utc)
-    await db.flush()
+    db.save(user)
 
     access_token = create_access_token(user.id)
     refresh_token, jti = create_refresh_token(user.id)
@@ -70,7 +68,7 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+def refresh(body: RefreshRequest, db: FirestoreStore = Depends(get_db)):
     try:
         payload = decode_token(body.refresh_token)
     except JWTError:
@@ -80,13 +78,12 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not a refresh token")
 
     jti = payload.get("jti")
-    if jti and await is_token_blocklisted(jti, db):
+    if jti and is_token_blocklisted(jti, db):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
 
     user_id = int(payload["sub"])
-    result = await db.execute(select(AdminUser).where(AdminUser.id == user_id, AdminUser.is_active == True))
-    user = result.scalar_one_or_none()
-    if not user:
+    user = db.get("admin_users", user_id)
+    if not user or not getattr(user, "is_active", False):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
     access_token = create_access_token(user.id)
@@ -95,23 +92,23 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     # Blocklist old refresh token
     if jti:
         exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-        await blocklist_token(jti, exp, db)
+        blocklist_token(jti, exp, db)
 
     return TokenResponse(access_token=access_token, refresh_token=new_refresh_token)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+def logout(body: RefreshRequest, db: FirestoreStore = Depends(get_db)):
     try:
         payload = decode_token(body.refresh_token)
         jti = payload.get("jti")
         if jti:
             exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-            await blocklist_token(jti, exp, db)
+            blocklist_token(jti, exp, db)
     except JWTError:
         pass  # token already invalid — logout is idempotent
 
 
 @router.get("/me", response_model=AdminUserResponse)
-async def me(current_user: AdminUser = Depends(get_current_user)):
+def me(current_user: FirestoreObject = Depends(get_current_user)):
     return current_user

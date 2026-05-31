@@ -32,7 +32,6 @@ class BudgetEnforcementCallback(CustomLogger):
 
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         from gateway.db.session import get_db_context
-        from gateway.models.virtual_key import VirtualKey
         from gateway.services.alert_service import AlertService
 
         metadata = data.get("metadata") or {}
@@ -42,7 +41,7 @@ class BudgetEnforcementCallback(CustomLogger):
             return  # Admin/unkeyed call — skip budget check
 
         async with get_db_context() as db:
-            key = await db.get(VirtualKey, virtual_key_id)
+            key = db.get("virtual_keys", virtual_key_id)
             if not key:
                 return
 

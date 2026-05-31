@@ -4,12 +4,10 @@ import logging
 import litellm
 from litellm.caching.caching import Cache
 
-from gateway.models.cache_config import CacheConfig
-
 logger = logging.getLogger(__name__)
 
 
-def apply_cache_config(config: CacheConfig | None) -> None:
+def apply_cache_config(config) -> None:
     if not config or not config.is_enabled:
         litellm.cache = None
         logger.info("LiteLLM cache disabled.")

@@ -10,13 +10,12 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.callbacks.budget_callback import BudgetExceededError, KeyInactiveError
 from gateway.config import settings
 from gateway.db.session import get_db
 from gateway.dependencies import get_current_user, get_litellm_service
+from gateway.firestore_store import FirestoreStore
 from gateway.services.guardrail_service import apply_input_guardrails, apply_output_guardrails
 from gateway.services.key_service import validate_key
 
@@ -35,31 +34,29 @@ async def _persist_blocked_request(
     Uses an independent DB session so the row is committed regardless of what
     happens to the request-scoped session (which is rolled back on exceptions).
     """
-    from gateway.db.session import get_db_context
-    from gateway.models.request_log import RequestLog
+    from gateway.firestore_store import store
 
     try:
         now = datetime.now(timezone.utc)
-        async with get_db_context() as db:
-            log = RequestLog(
-                request_id=str(uuid.uuid4()),
-                virtual_key_id=virtual_key_id,
-                team_id=team_id,
-                litellm_model_name=model,
-                requested_model=model,
-                status_code=status_code,
-                prompt_messages=[],
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-                cost_usd=0,
-                latency_ms=0,
-                cache_hit=False,
-                guardrail_triggered=False,
-                started_at=now,
-            )
-            db.add(log)
-            # get_db_context auto-commits on exit — no explicit commit needed
+        store.create("request_logs", {
+            "request_id": str(uuid.uuid4()),
+            "virtual_key_id": virtual_key_id,
+            "team_id": team_id,
+            "litellm_model_name": model,
+            "requested_model": model,
+            "status_code": status_code,
+            "prompt_messages": [],
+            "response_content": None,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost_usd": 0,
+            "latency_ms": 0,
+            "cache_hit": False,
+            "guardrail_triggered": False,
+            "error_message": None,
+            "started_at": now,
+        })
     except Exception as exc:
         logger.error("Failed to log blocked request: %s", exc)
 
@@ -81,7 +78,7 @@ class ChatCompletionRequest(BaseModel):
 async def chat_completions(
     body: ChatCompletionRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: FirestoreStore = Depends(get_db),
     litellm_service=Depends(get_litellm_service),
 ) -> Any:
     # ── 1. Authentication ─────────────────────────────────────────────────────
@@ -108,7 +105,7 @@ async def chat_completions(
     elif auth_header.startswith("Bearer "):
         # Admin JWT path — validate the token properly
         try:
-            await get_current_user(request, db)
+            get_current_user(request, db)
         except HTTPException:
             raise  # Re-raise 401/403 from get_current_user as-is
     else:
@@ -116,16 +113,12 @@ async def chat_completions(
 
     # ── 2. Rate limiting (DB-backed, survives restarts) ───────────────────────
     if virtual_key and virtual_key.rpm_limit:
-        from gateway.models.request_log import RequestLog as _RL
         now_utc = datetime.now(timezone.utc)
         minute_start = now_utc.replace(second=0, microsecond=0)
-        rpm_result = await db.execute(
-            select(func.count(_RL.id)).where(
-                _RL.virtual_key_id == virtual_key.id,
-                _RL.started_at >= minute_start,
-            )
-        )
-        current_rpm = rpm_result.scalar() or 0
+        current_rpm = len([
+            log for log in db.where("request_logs", virtual_key_id=virtual_key.id)
+            if log.started_at >= minute_start
+        ])
         if current_rpm >= virtual_key.rpm_limit:
             # Persist the blocked request using a separate session so it commits
             # even though we are about to raise an exception in this session.

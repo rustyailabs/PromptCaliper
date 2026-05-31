@@ -3,11 +3,9 @@ from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.config import settings
-from gateway.models.admin_user import AdminUser, RefreshTokenBlocklist
+from gateway.firestore_store import FirestoreObject, FirestoreStore
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -39,22 +37,16 @@ def decode_token(token: str) -> dict:
     return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
 
 
-async def authenticate_user(username: str, password: str, db: AsyncSession) -> AdminUser | None:
-    result = await db.execute(select(AdminUser).where(AdminUser.username == username, AdminUser.is_active == True))
-    user = result.scalar_one_or_none()
-    if not user or not verify_password(password, user.hashed_password):
+def authenticate_user(username: str, password: str, db: FirestoreStore) -> FirestoreObject | None:
+    user = db.first("admin_users", username=username)
+    if not user or not getattr(user, "is_active", False) or not verify_password(password, user.hashed_password):
         return None
     return user
 
 
-async def is_token_blocklisted(jti: str, db: AsyncSession) -> bool:
-    result = await db.execute(
-        select(RefreshTokenBlocklist).where(RefreshTokenBlocklist.jti == jti)
-    )
-    return result.scalar_one_or_none() is not None
+def is_token_blocklisted(jti: str, db: FirestoreStore) -> bool:
+    return db.first("refresh_token_blocklist", jti=jti) is not None
 
 
-async def blocklist_token(jti: str, expires_at: datetime, db: AsyncSession) -> None:
-    entry = RefreshTokenBlocklist(jti=jti, expires_at=expires_at)
-    db.add(entry)
-    await db.flush()
+def blocklist_token(jti: str, expires_at: datetime, db: FirestoreStore) -> None:
+    db.create("refresh_token_blocklist", {"jti": jti, "expires_at": expires_at})

@@ -12,12 +12,39 @@ import litellm
 from litellm import Router
 
 from gateway.config import settings
+from gateway.firestore_store import FirestoreStore, store
 
 logger = logging.getLogger(__name__)
 
 # Suppress noisy LiteLLM success prints in non-debug mode
 litellm.suppress_debug_info = not settings.DEBUG
 litellm.set_verbose = settings.DEBUG
+
+
+def active_model_configs(db: FirestoreStore | None = None) -> list:
+    """Return active model configs from Firestore (list+filter avoids brittle bool queries)."""
+    db = db or store
+    return [m for m in db.list("model_configs") if getattr(m, "is_active", False)]
+
+
+def normalize_vertex_litellm_model(litellm_model_name: str) -> str:
+    """Normalize legacy vertex_ai/global/<model> paths to vertex_ai/<model>."""
+    prefix = "vertex_ai/global/"
+    if litellm_model_name.startswith(prefix):
+        return f"vertex_ai/{litellm_model_name[len(prefix):]}"
+    return litellm_model_name
+
+
+def vertex_litellm_params(mc) -> dict[str, Any]:
+    """Build LiteLLM params for Vertex AI models with global region."""
+    params: dict[str, Any] = {
+        "model": normalize_vertex_litellm_model(mc.litellm_model_name),
+        "weight": mc.routing_weight,
+        "vertex_location": settings.VERTEXAI_LOCATION or "global",
+    }
+    if settings.VERTEXAI_PROJECT:
+        params["vertex_project"] = settings.VERTEXAI_PROJECT
+    return params
 
 
 class LiteLLMService:
@@ -39,16 +66,27 @@ class LiteLLMService:
             if not mc.is_active:
                 continue
 
-            entry = {
-                "model_name": mc.display_name,
-                "litellm_params": {
+            if mc.provider == "vertex_ai" or str(mc.litellm_model_name).startswith("vertex_ai/"):
+                litellm_params = vertex_litellm_params(mc)
+            else:
+                litellm_params = {
                     "model": mc.litellm_model_name,
                     "weight": mc.routing_weight,
-                },
+                }
+                if mc.api_key_env_var and os.environ.get(mc.api_key_env_var):
+                    litellm_params["api_key"] = os.environ[mc.api_key_env_var]
+
+            entry = {
+                "model_name": mc.display_name,
+                "litellm_params": litellm_params,
             }
             if mc.api_base:
                 entry["litellm_params"]["api_base"] = mc.api_base
-            if mc.api_key_env_var and os.environ.get(mc.api_key_env_var):
+            if (
+                mc.provider != "vertex_ai"
+                and mc.api_key_env_var
+                and os.environ.get(mc.api_key_env_var)
+            ):
                 entry["litellm_params"]["api_key"] = os.environ[mc.api_key_env_var]
 
             model_list.append(entry)
@@ -90,6 +128,16 @@ class LiteLLMService:
         litellm.callbacks = callbacks
         logger.info("Registered %d LiteLLM callback(s).", len(callbacks))
 
+    def ensure_router(self, db: FirestoreStore | None = None) -> bool:
+        """Load the router from Firestore when empty (e.g. models added after startup)."""
+        if self.router is not None:
+            return True
+        configs = active_model_configs(db)
+        if not configs:
+            return False
+        self.initialize(configs)
+        return self.router is not None
+
     async def complete(
         self,
         messages: list[dict],
@@ -100,8 +148,11 @@ class LiteLLMService:
         **kwargs: Any,
     ) -> Any:
         """Route a chat completion through LiteLLM Router."""
-        if self.router is None:
-            raise RuntimeError("LiteLLM Router not initialized. Add at least one active model.")
+        if not self.ensure_router():
+            raise RuntimeError(
+                "LiteLLM Router not initialized. Add at least one active model via "
+                "POST /api/models or the Models tab in the UI."
+            )
 
         metadata = {
             "virtual_key_id": virtual_key_id,
@@ -160,7 +211,15 @@ class LiteLLMService:
             "AWS_ACCESS_KEY_ID": settings.AWS_ACCESS_KEY_ID,
             "AWS_SECRET_ACCESS_KEY": settings.AWS_SECRET_ACCESS_KEY,
             "AWS_REGION_NAME": settings.AWS_REGION_NAME,
+            "VERTEXAI_PROJECT": settings.VERTEXAI_PROJECT,
+            "VERTEXAI_LOCATION": settings.VERTEXAI_LOCATION,
         }
         for k, v in key_map.items():
             if v:
                 os.environ[k] = v
+        if settings.VERTEXAI_PROJECT:
+            os.environ.setdefault("GOOGLE_CLOUD_PROJECT", settings.VERTEXAI_PROJECT)
+        location = settings.VERTEXAI_LOCATION or "global"
+        litellm.vertex_location = location
+        if settings.VERTEXAI_PROJECT:
+            litellm.vertex_project = settings.VERTEXAI_PROJECT

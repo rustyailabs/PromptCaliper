@@ -27,11 +27,6 @@ class RequestLoggingCallback(CustomLogger):
         await self._persist(kwargs, response_obj, start_time, end_time, success=False)
 
     async def _persist(self, kwargs, response_obj, start_time, end_time, success: bool):
-        from gateway.models.request_log import RequestLog
-        from gateway.models.spend_ledger import SpendLedger
-        from gateway.models.virtual_key import VirtualKey
-        from sqlalchemy import select
-
         try:
             # LiteLLM Router stores metadata under litellm_params.metadata,
             # not at the top-level kwargs["metadata"].
@@ -105,56 +100,52 @@ class RequestLoggingCallback(CustomLogger):
             async with get_db_context() as db:
                 # Fetch the runtime flag via TTL cache (DB hit at most once per
                 # 10 s per worker — effectively free on the hot path).
-                log_content = await get_log_prompt_content(db)
+                log_content = get_log_prompt_content(db)
 
                 # Resolve response content now that the runtime flag is known.
                 if log_content and success and response_obj and hasattr(response_obj, "choices") and response_obj.choices:
                     response_content = response_obj.choices[0].message.content
 
-                log = RequestLog(
-                    request_id=request_id,
-                    virtual_key_id=virtual_key_id,
-                    team_id=team_id,
-                    litellm_model_name=actual_model,
-                    requested_model=kwargs.get("model"),
-                    status_code=status_code,
-                    prompt_messages=kwargs.get("messages", []) if log_content else [],
-                    response_content=response_content,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    total_tokens=total_tokens,
-                    cost_usd=cost_usd,
-                    latency_ms=latency_ms,
-                    cache_hit=cache_hit,
-                    guardrail_triggered=metadata.get("guardrail_triggered", False),
-                    error_message=error_message,
-                    started_at=started_at,
-                )
-                db.add(log)
-                await db.flush()  # get log.id
+                log = db.create("request_logs", {
+                    "request_id": request_id,
+                    "virtual_key_id": virtual_key_id,
+                    "team_id": team_id,
+                    "litellm_model_name": actual_model,
+                    "requested_model": kwargs.get("model"),
+                    "status_code": status_code,
+                    "prompt_messages": kwargs.get("messages", []) if log_content else [],
+                    "response_content": response_content,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "cost_usd": cost_usd,
+                    "latency_ms": latency_ms,
+                    "cache_hit": cache_hit,
+                    "guardrail_triggered": metadata.get("guardrail_triggered", False),
+                    "error_message": error_message,
+                    "started_at": started_at,
+                })
 
                 # Always write SpendLedger — even zero-cost models need token tracking
-                ledger = SpendLedger(
-                    request_log_id=log.id,
-                    virtual_key_id=virtual_key_id,
-                    team_id=team_id,
-                    amount_usd=cost_usd,
-                    period_month=period_month,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                )
-                db.add(ledger)
+                db.create("spend_ledger", {
+                    "request_log_id": log.id,
+                    "virtual_key_id": virtual_key_id,
+                    "team_id": team_id,
+                    "model_config_id": None,
+                    "amount_usd": cost_usd,
+                    "period_month": period_month,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                })
 
                 # Update denormalized spend counter on the virtual key atomically.
                 # Using a SQL UPDATE expression avoids the read-modify-write race
                 # condition that occurs when two requests complete concurrently.
                 if cost_usd > 0 and virtual_key_id:
-                    from sqlalchemy import update as sa_update
-                    await db.execute(
-                        sa_update(VirtualKey)
-                        .where(VirtualKey.id == virtual_key_id)
-                        .values(current_spend_usd=VirtualKey.current_spend_usd + cost_usd)
-                    )
+                    key = db.get("virtual_keys", virtual_key_id)
+                    if key:
+                        key.current_spend_usd = float(key.current_spend_usd or 0) + float(cost_usd)
+                        db.save(key)
 
         except Exception as exc:
             logger.error("RequestLoggingCallback failed: %s", exc, exc_info=True)

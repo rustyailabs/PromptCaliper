@@ -19,10 +19,8 @@ import re
 import threading
 
 from fastapi import HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway.models.guardrail_config import GuardrailConfig
+from gateway.firestore_store import FirestoreStore
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +135,7 @@ def _detect_prompt_injection(text: str) -> bool:
 
 
 async def apply_input_guardrails(
-    messages: list[dict], db: AsyncSession
+    messages: list[dict], db: FirestoreStore
 ) -> tuple[list[dict], bool, list[str]]:
     """
     Apply all active input guardrails.
@@ -151,13 +149,10 @@ async def apply_input_guardrails(
         rewrite — strips/neutralises offending content, continues
         redact  — replaces PII in-place (pii_redaction type only)
     """
-    result = await db.execute(
-        select(GuardrailConfig).where(
-            GuardrailConfig.is_active == True,
-            GuardrailConfig.applies_to.in_(["input", "both"]),
-        )
-    )
-    configs = result.scalars().all()
+    configs = [
+        c for c in db.where("guardrail_configs", is_active=True)
+        if c.applies_to in ("input", "both")
+    ]
 
     triggered = False
     triggered_by: list[str] = []
@@ -260,7 +255,7 @@ async def apply_input_guardrails(
 
 
 async def apply_output_guardrails(
-    content: str, db: AsyncSession
+    content: str, db: FirestoreStore
 ) -> tuple[str, bool, list[str]]:
     """
     Apply all active output guardrails.
@@ -268,13 +263,10 @@ async def apply_output_guardrails(
     Returns:
         (processed_content, any_triggered, triggered_by_names)
     """
-    result = await db.execute(
-        select(GuardrailConfig).where(
-            GuardrailConfig.is_active == True,
-            GuardrailConfig.applies_to.in_(["output", "both"]),
-        )
-    )
-    configs = result.scalars().all()
+    configs = [
+        c for c in db.where("guardrail_configs", is_active=True)
+        if c.applies_to in ("output", "both")
+    ]
 
     triggered = False
     triggered_by: list[str] = []

@@ -3,10 +3,7 @@ import hashlib
 import secrets
 from datetime import datetime, timezone
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from gateway.models.virtual_key import VirtualKey
+from gateway.firestore_store import FirestoreObject, FirestoreStore
 
 
 def generate_virtual_key() -> tuple[str, str, str]:
@@ -24,15 +21,9 @@ def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
-async def validate_key(raw_key: str, db: AsyncSession) -> VirtualKey | None:
+async def validate_key(raw_key: str, db: FirestoreStore) -> FirestoreObject | None:
     key_hash = hash_key(raw_key)
-    result = await db.execute(
-        select(VirtualKey).where(
-            VirtualKey.key_hash == key_hash,
-            VirtualKey.is_active == True,
-        )
-    )
-    key = result.scalar_one_or_none()
+    key = db.first("virtual_keys", key_hash=key_hash, is_active=True)
 
     if key is None:
         return None

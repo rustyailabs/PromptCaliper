@@ -1,16 +1,25 @@
+import os
 from typing import List
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_GATEWAY_DIR = os.path.dirname(os.path.abspath(__file__))
 
 _INSECURE_JWT_DEFAULT = "change-me-in-production-use-a-long-random-string"
 _INSECURE_PASSWORD_DEFAULT = "change-me-on-first-login"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=os.path.join(_GATEWAY_DIR, ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-    # ── Database ────────────────────────────────────────────────────────────
-    DATABASE_URL: str = "sqlite+aiosqlite:///./gateway.db"
+    # ── Firestore (ADC) ─────────────────────────────────────────────────────
+    FIRESTORE_PROJECT: str = ""
+    FIRESTORE_DATABASE: str = "promptcaliper"
 
     # ── JWT ─────────────────────────────────────────────────────────────────
     JWT_SECRET_KEY: str = _INSECURE_JWT_DEFAULT
@@ -37,6 +46,10 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_REGION_NAME: str = "us-east-1"
     OLLAMA_API_BASE: str = "http://localhost:11434"
+
+    # ── Vertex AI (ADC) ──────────────────────────────────────────────────────
+    VERTEXAI_PROJECT: str = ""
+    VERTEXAI_LOCATION: str = "global"
 
     # ── Rate limiting backend ────────────────────────────────────────────────
     RATE_LIMIT_BACKEND: str = "memory"   # "memory" | "redis"
