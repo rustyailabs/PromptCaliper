@@ -5,6 +5,10 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _GATEWAY_DIR = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_ADC_PATH = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+
+if "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ and os.path.exists(_DEFAULT_ADC_PATH):
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _DEFAULT_ADC_PATH
 
 _INSECURE_JWT_DEFAULT = "change-me-in-production-use-a-long-random-string"
 _INSECURE_PASSWORD_DEFAULT = "change-me-on-first-login"
@@ -19,7 +23,8 @@ class Settings(BaseSettings):
 
     # ── Firestore (ADC) ─────────────────────────────────────────────────────
     FIRESTORE_PROJECT: str = ""
-    FIRESTORE_DATABASE: str = "promptcaliper"
+    FIRESTORE_DATABASE: str = "(default)"
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""
 
     # ── JWT ─────────────────────────────────────────────────────────────────
     JWT_SECRET_KEY: str = _INSECURE_JWT_DEFAULT
@@ -84,6 +89,8 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     GATEWAY_PORT: int = 8000
     APP_VERSION: str = "2.0.0"
+    SERVE_FRONTEND: bool = False
+    FRONTEND_DIST_DIR: str = os.path.abspath(os.path.join(_GATEWAY_DIR, os.pardir, "dist"))
 
     @model_validator(mode="after")
     def _reject_insecure_defaults_in_production(self) -> "Settings":

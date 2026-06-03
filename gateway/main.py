@@ -1,12 +1,14 @@
 """PromptCaliper AI Gateway — FastAPI application factory."""
 import logging
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 from gateway.auth.router import router as auth_router
@@ -32,7 +34,13 @@ async def _create_tables() -> None:
 async def _seed_superadmin() -> None:
     from gateway.auth.service import hash_password
 
-    if store.first("admin_users", username=settings.SUPERADMIN_USERNAME):
+    existing = store.first("admin_users", username=settings.SUPERADMIN_USERNAME)
+    if existing:
+        existing.hashed_password = hash_password(settings.SUPERADMIN_PASSWORD)
+        existing.is_active = True
+        existing.is_superadmin = True
+        store.save(existing)
+        logger.info("Superadmin '%s' password synced from env.", settings.SUPERADMIN_USERNAME)
         return
     store.create("admin_users", {
         "username": settings.SUPERADMIN_USERNAME,
@@ -182,7 +190,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Cache-Control"] = "no-store"
+        if request.url.path.startswith("/assets/") or request.url.path == "/favicon.ico":
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-store"
         # Only set HSTS when running over TLS (not local HTTP dev)
         if request.url.scheme == "https":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -248,6 +259,8 @@ def create_app() -> FastAPI:
         status_code = 200 if db_ok else 503
         return JSONResponse(content=payload, status_code=status_code)
 
+    _register_frontend_routes(app)
+
     return app
 
 
@@ -281,6 +294,41 @@ def _register_management_routers(app: FastAPI) -> None:
                 "Failed to load router '%s' (prefix=%s): %s — this API surface will be unavailable.",
                 module_path, prefix, exc,
             )
+
+
+def _register_frontend_routes(app: FastAPI) -> None:
+    """Serve the built SPA from the same container when enabled."""
+    if not settings.SERVE_FRONTEND:
+        return
+
+    frontend_root = Path(settings.FRONTEND_DIST_DIR).expanduser().resolve()
+    index_file = frontend_root / "index.html"
+    assets_dir = frontend_root / "assets"
+
+    if not index_file.exists():
+        logger.warning(
+            "SERVE_FRONTEND is enabled, but no built frontend was found at %s.",
+            index_file,
+        )
+        return
+
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="frontend-assets")
+
+    @app.get("/", include_in_schema=False)
+    async def frontend_index():
+        return FileResponse(index_file)
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def frontend_spa(path: str):
+        if path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+        candidate = (frontend_root / path).resolve()
+        if (candidate == frontend_root or frontend_root in candidate.parents) and candidate.is_file():
+            return FileResponse(candidate)
+
+        return FileResponse(index_file)
 
 
 app = create_app()

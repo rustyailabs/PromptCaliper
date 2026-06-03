@@ -1,7 +1,7 @@
 # Firestore Schema — PromptCaliper Gateway
 
-**GCP project:** `emerald-spring-486005-r4`  
-**Database ID:** `promptcaliper` (named database — not `(default)`)
+**GCP project:** `rustyailabs-dev`  
+**Database ID:** `(default)`
 
 Firestore has no enforced schema. Collections and fields below match what the gateway reads and writes. Pydantic schemas live in `gateway/schemas/` unless noted.
 
@@ -338,8 +338,8 @@ Auto-increment state per collection.
 
 ## Firebase Console navigation
 
-1. [Firebase Console](https://console.firebase.google.com/) → project linked to `emerald-spring-486005-r4`
-2. **Firestore Database** → database selector → choose **`promptcaliper`**
+1. [Firebase Console](https://console.firebase.google.com/) → project linked to `rustyailabs-dev`
+2. **Firestore Database** → database selector → choose **`(default)`**
 3. Browse collections listed above (e.g. `virtual_keys`, `model_configs`)
 
-Or in [GCP Console](https://console.cloud.google.com/firestore/databases?project=emerald-spring-486005-r4) → Firestore → select database **`promptcaliper`**.
+Or in [GCP Console](https://console.cloud.google.com/firestore/databases?project=rustyailabs-dev) → Firestore → select database **`(default)`**.

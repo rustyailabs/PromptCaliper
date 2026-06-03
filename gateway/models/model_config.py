@@ -12,7 +12,7 @@ class ModelConfig(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     litellm_model_name: Mapped[str] = mapped_column(String(200), nullable=False)  # e.g. "azure/gpt-4-turbo"
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)  # openai|anthropic|azure|gemini|bedrock|ollama
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)  # openai|anthropic|azure|gemini|vertex_ai|bedrock|ollama
     api_base: Mapped[str | None] = mapped_column(String(500), nullable=True)  # for Azure/Ollama
     api_key_env_var: Mapped[str | None] = mapped_column(String(100), nullable=True)  # env var name holding the key; None for local/keyless models
     routing_weight: Mapped[int] = mapped_column(Integer, default=1)  # higher = more traffic

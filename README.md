@@ -184,6 +184,81 @@ curl http://localhost/api/v1/chat/completions \
 - **TLS:** add a `certbot` container or place an external load balancer (AWS ALB, Cloudflare) in front of nginx.
 - **Alembic migrations:** run `alembic upgrade head` inside the gateway container before deploying schema changes.
 
+---
+
+## Cloud Run Deployment (single container, scale to zero)
+
+If you want the cheapest Google Cloud option that scales to zero, deploy the root [`Dockerfile`](/Users/dhargopala/Desktop/Projects/PromptCaliper/PromptCaliper/Dockerfile). It builds the React UI and serves it from the same FastAPI process, so you only need one Cloud Run service and one HTTPS URL.
+
+### What this mode gives you
+
+- One container for both UI and API
+- Automatic scale-to-zero when idle
+- Same-origin frontend/API traffic, so the UI can call `/api/*` directly
+
+### Recommended runtime settings
+
+Set these on the Cloud Run service:
+
+- `FIRESTORE_PROJECT=rustyailabs-dev`
+- `FIRESTORE_DATABASE=(default)`
+- `VERTEXAI_PROJECT=rustyailabs-dev`
+- `CORS_ORIGINS=["https://YOUR-CLOUD-RUN-URL"]`
+- `JWT_SECRET_KEY` to a strong random secret
+- `SUPERADMIN_USERNAME=admin`
+- `SUPERADMIN_PASSWORD` to your chosen admin password
+- Cloud Run runtime service account with Firestore and Vertex AI access
+  - `roles/datastore.user`
+  - `roles/aiplatform.user`
+
+The container already enables `SERVE_FRONTEND=true` and listens on Cloud Run's `PORT`.
+
+### One-command deploy (recommended)
+
+From the repo root, after `gcloud auth login` and `gcloud auth application-default login`:
+
+```bash
+# Optional: pin production secrets (otherwise the script generates them once)
+export DEPLOY_JWT_SECRET="$(openssl rand -hex 32)"
+export DEPLOY_SUPERADMIN_PASSWORD="$(openssl rand -hex 16)"
+
+# Optional: pass LLM provider keys into the container
+# export OPENAI_API_KEY=sk-...
+
+./scripts/deploy-cloudrun.sh
+```
+
+The script uses project `rustyailabs-dev`, Firestore database `(default)`, creates a `promptcaliper-run` service account with Firestore + Vertex AI roles, deploys with `--min-instances 0`, then sets `CORS_ORIGINS` to the live Cloud Run URL.
+
+### Manual deploy command
+
+```bash
+gcloud run deploy promptcaliper \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --min-instances 0 \
+  --max-instances 10 \
+  --cpu 1 \
+  --memory 1Gi \
+  --set-env-vars FIRESTORE_PROJECT=rustyailabs-dev,FIRESTORE_DATABASE='(default)',VERTEXAI_PROJECT=rustyailabs-dev,DEBUG=false,CORS_ORIGINS='["https://YOUR-CLOUD-RUN-URL"]',SUPERADMIN_USERNAME=admin,SUPERADMIN_PASSWORD=change-me,JWT_SECRET_KEY=change-me-too
+```
+
+### Split deploy: IAP admin + public API
+
+`scripts/deploy-cloudrun.sh` deploys two services from the same image:
+
+| Service | Access | Purpose |
+|---------|--------|---------|
+| `promptcaliper-api` | Public (`--allow-unauthenticated`) | LLM traffic with `sk-ft-...` virtual keys; ADC for Firestore + Vertex |
+| `promptcaliper-admin` | IAP + app login | React admin console; Google identity first, then `admin` / your password |
+
+Store deploy secrets in `scripts/.deploy-secrets.local` (gitignored), then run the script after `gcloud auth login`.
+
+### IAP note
+
+IAP only protects the admin service. The public API service does not use IAP — virtual keys are the gate for `/api/v1/chat/completions`.
+
 ### Useful ops commands
 
 ```bash

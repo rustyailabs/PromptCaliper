@@ -1,0 +1,14 @@
+.git
+.gitignore
+.DS_Store
+node_modules
+dist
+gateway/.venv
+gateway/__pycache__
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+gateway/.env
+*.log
