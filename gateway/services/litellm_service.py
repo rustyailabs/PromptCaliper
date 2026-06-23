@@ -6,10 +6,14 @@ Callbacks are registered at startup and handle logging + budget enforcement.
 """
 import logging
 import os
+import base64
 from typing import Any
 
 import litellm
 from litellm import Router
+import google.auth
+from google.auth.transport.requests import Request as GoogleAuthRequest
+import requests
 
 from gateway.config import settings
 from gateway.firestore_store import FirestoreStore, store
@@ -19,6 +23,8 @@ logger = logging.getLogger(__name__)
 # Suppress noisy LiteLLM success prints in non-debug mode
 litellm.suppress_debug_info = not settings.DEBUG
 litellm.set_verbose = settings.DEBUG
+litellm.drop_params = True
+
 
 
 def active_model_configs(db: FirestoreStore | None = None) -> list:
@@ -193,6 +199,155 @@ class LiteLLMService:
             **kwargs,
         )
         return response
+
+    async def generate_image(
+        self,
+        prompt: str,
+        model: str,
+        virtual_key_id: int | None = None,
+        team_id: int | None = None,
+        extra_metadata: dict | None = None,
+        source_base64: str | None = None,
+        mime_type: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Route an image generation request through LiteLLM Router."""
+        if not self.ensure_router():
+            raise RuntimeError(
+                "LiteLLM Router not initialized. Add at least one active model via "
+                "POST /api/models or the Models tab in the UI."
+            )
+
+        metadata = {
+            "virtual_key_id": virtual_key_id,
+            "team_id": team_id,
+            **(extra_metadata or {}),
+        }
+
+        # Vertex multimodal image editing path via LiteLLM.
+        if source_base64:
+            return await self._generate_vertex_image_edit(
+                prompt=prompt,
+                model=model,
+                source_base64=source_base64,
+                mime_type=mime_type or "image/png",
+                metadata=metadata,
+                **kwargs,
+            )
+
+        response = await self.router.aimage_generation(
+            model=model,
+            prompt=prompt,
+            metadata=metadata,
+            **kwargs,
+        )
+        return response
+
+    async def _generate_vertex_image_edit(
+        self,
+        prompt: str,
+        model: str,
+        source_base64: str,
+        mime_type: str,
+        metadata: dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        """Call LiteLLM's image_edit helper for multimodal image editing."""
+        # Resolve the configured Vertex deployment from the model registry.
+        litellm_model = None
+        for mc in self._model_configs:
+            if mc.display_name == model:
+                litellm_model = normalize_vertex_litellm_model(mc.litellm_model_name)
+                break
+        if not litellm_model:
+            litellm_model = model if model.startswith("vertex_ai/") else f"vertex_ai/{model}"
+        vertex_model = litellm_model.split("/", 1)[1] if "/" in litellm_model else litellm_model
+
+        project = settings.VERTEXAI_PROJECT
+        location = settings.VERTEXAI_LOCATION
+        if not location or location == "global":
+            location = "us-central1"
+        if not project:
+            raise RuntimeError("VERTEXAI_PROJECT is required for multimodal image generation.")
+        image_bytes = base64.b64decode(source_base64)
+
+        response = await litellm.aimage_edit(
+            image=image_bytes,
+            model=litellm_model,
+            prompt=prompt,
+            n=kwargs.get("n"),
+            quality=kwargs.get("quality"),
+            response_format=kwargs.get("response_format"),
+            size=kwargs.get("size"),
+            custom_llm_provider="vertex_ai",
+            vertex_project=project,
+            vertex_location=location,
+        )
+
+        return response
+
+    async def generate_video(
+        self,
+        prompt: str,
+        model: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Route a video generation request through LiteLLM."""
+        self._sync_env_keys()
+        
+        # Resolve real litellm model name from config
+        litellm_model = model
+        for mc in self._model_configs:
+            if mc.display_name == model:
+                litellm_model = mc.litellm_model_name
+                break
+
+        kwargs.setdefault("vertex_project", settings.VERTEXAI_PROJECT)
+        loc = settings.VERTEXAI_LOCATION
+        if not loc or loc == "global":
+            loc = "us-central1"
+        kwargs.setdefault("vertex_location", loc)
+
+        response = await litellm.avideo_generation(
+            model=litellm_model,
+            prompt=prompt,
+            **kwargs,
+        )
+        return response
+
+
+    async def get_video_status(
+        self,
+        video_id: str,
+    ) -> Any:
+        """Get the status of a video generation task."""
+        self._sync_env_keys()
+        loc = settings.VERTEXAI_LOCATION
+        if not loc or loc == "global":
+            loc = "us-central1"
+        return await litellm.avideo_status(
+            video_id=video_id,
+            custom_llm_provider="vertex_ai",
+            vertex_project=settings.VERTEXAI_PROJECT,
+            vertex_location=loc,
+        )
+
+    async def get_video_content(
+        self,
+        video_id: str,
+    ) -> Any:
+        """Get the content of a generated video."""
+        self._sync_env_keys()
+        loc = settings.VERTEXAI_LOCATION
+        if not loc or loc == "global":
+            loc = "us-central1"
+        return await litellm.avideo_content(
+            video_id=video_id,
+            custom_llm_provider="vertex_ai",
+            vertex_project=settings.VERTEXAI_PROJECT,
+            vertex_location=loc,
+        )
+
 
     def reinitialize(self, model_configs: list) -> None:
         """Rebuild router after model config changes. Thread-safe by Python GIL."""

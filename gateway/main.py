@@ -58,13 +58,28 @@ async def _seed_vertex_models() -> None:
     if not settings.VERTEXAI_PROJECT:
         return
 
+    # Vertex AI image generation family commonly referred to as "nano banana".
     defaults = [
         ("gemini-3.1-pro", "vertex_ai/gemini-3.1-pro"),
         ("gemini-3.5-flash", "vertex_ai/gemini-3.5-flash"),
+        ("gemini-2.5-flash-image", "vertex_ai/gemini-2.5-flash-image"),
+        ("gemini-3.1-flash-image", "vertex_ai/gemini-3.1-flash-image"),
+        ("gemini-3-pro-image-preview", "vertex_ai/gemini-3-pro-image-preview"),
+        ("veo-3.1", "vertex_ai/veo-3.1-generate-001"),
+        ("veo-3.1-fast", "vertex_ai/veo-3.1-fast-generate-001"),
+        ("veo-3.1-lite", "vertex_ai/veo-3.1-lite-generate-001"),
+        ("veo-3.0", "vertex_ai/veo-3.0-generate-001"),
+        ("veo-3.0-fast", "vertex_ai/veo-3.0-fast-generate-001"),
+        ("veo-2.0", "vertex_ai/veo-2.0-generate-001"),
     ]
     seeded = []
     for display_name, litellm_name in defaults:
-        if store.first("model_configs", litellm_model_name=litellm_name):
+        existing = store.first("model_configs", display_name=display_name)
+        if existing:
+            if existing.litellm_model_name != litellm_name:
+                existing.litellm_model_name = litellm_name
+                store.save(existing)
+                logger.info("Updated model config for '%s' to '%s'", display_name, litellm_name)
             continue
         store.create("model_configs", {
             "display_name": display_name,

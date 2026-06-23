@@ -244,20 +244,14 @@ gcloud run deploy promptcaliper \
   --set-env-vars FIRESTORE_PROJECT=rustyailabs-dev,FIRESTORE_DATABASE='(default)',VERTEXAI_PROJECT=rustyailabs-dev,DEBUG=false,CORS_ORIGINS='["https://YOUR-CLOUD-RUN-URL"]',SUPERADMIN_USERNAME=admin,SUPERADMIN_PASSWORD=change-me,JWT_SECRET_KEY=change-me-too
 ```
 
-### Split deploy: IAP admin + public API
+### Single-service access
 
-`scripts/deploy-cloudrun.sh` deploys two services from the same image:
+If you deploy the single-service Cloud Run setup, the service can stay publicly reachable at the Cloud Run layer while the app itself uses:
 
-| Service | Access | Purpose |
-|---------|--------|---------|
-| `promptcaliper-api` | Public (`--allow-unauthenticated`) | LLM traffic with `sk-ft-...` virtual keys; ADC for Firestore + Vertex |
-| `promptcaliper-admin` | IAP + app login | React admin console; Google identity first, then `admin` / your password |
+- app login for the UI
+- `sk-ft-...` virtual keys for API calls
 
-Store deploy secrets in `scripts/.deploy-secrets.local` (gitignored), then run the script after `gcloud auth login`.
-
-### IAP note
-
-IAP only protects the admin service. The public API service does not use IAP — virtual keys are the gate for `/api/v1/chat/completions`.
+This is the simpler model when you want one service and one URL.
 
 ### Useful ops commands
 
