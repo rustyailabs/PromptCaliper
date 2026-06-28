@@ -29,6 +29,8 @@ def _log_to_dict(log: FirestoreObject, log_prompt_content: bool = False) -> dict
         "error_message": log.error_message,
         "started_at": log.started_at.isoformat() if log.started_at else None,
         "created_at": log.created_at.isoformat() if log.created_at else None,
+        "session_id": getattr(log, "session_id", None),
+        "client_service_tag": getattr(log, "client_service_tag", None),
     }
     if log_prompt_content:
         d["prompt_messages"] = log.prompt_messages

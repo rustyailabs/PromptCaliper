@@ -28,6 +28,8 @@ async def _persist_blocked_request(
     team_id: Any,
     model: str,
     status_code: int,
+    session_id: str | None = None,
+    client_service_tag: str | None = None,
 ) -> None:
     """Write a RequestLog row for requests blocked before reaching LiteLLM.
 
@@ -56,6 +58,8 @@ async def _persist_blocked_request(
             "guardrail_triggered": False,
             "error_message": None,
             "started_at": now,
+            "session_id": session_id,
+            "client_service_tag": client_service_tag,
         })
     except Exception as exc:
         logger.error("Failed to log blocked request: %s", exc)
@@ -73,12 +77,16 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = None
     stream: bool = False
     response_modalities: list[str] | None = None
+    session_id: str | None = None
+    client_service_tag: str | None = None
 
 
 async def _authenticate_and_rate_limit(
     request: Request,
     model: str,
     db: FirestoreStore,
+    session_id: str | None = None,
+    client_service_tag: str | None = None,
 ) -> tuple[Any, Any]:
     virtual_key = None
     team_id = None
@@ -120,7 +128,10 @@ async def _authenticate_and_rate_limit(
         if current_rpm >= virtual_key.rpm_limit:
             # Persist the blocked request using a separate session so it commits
             # even though we are about to raise an exception in this session.
-            await _persist_blocked_request(virtual_key.id, team_id, model, 429)
+            await _persist_blocked_request(
+                virtual_key.id, team_id, model, 429,
+                session_id=session_id, client_service_tag=client_service_tag
+            )
             retry_after = 60 - now_utc.second
             raise HTTPException(
                 status_code=429,
@@ -141,8 +152,13 @@ async def chat_completions(
     db: FirestoreStore = Depends(get_db),
     litellm_service=Depends(get_litellm_service),
 ) -> Any:
+    session_id = request.headers.get("X-Session-ID") or body.session_id
+    client_service_tag = request.headers.get("X-Client-Service-Tag") or body.client_service_tag
+
     # ── 1. Authentication & Rate limiting ────────────────────────────────────
-    virtual_key, team_id = await _authenticate_and_rate_limit(request, body.model, db)
+    virtual_key, team_id = await _authenticate_and_rate_limit(
+        request, body.model, db, session_id=session_id, client_service_tag=client_service_tag
+    )
 
     # ── 2. Input guardrails ───────────────────────────────────────────────────
     messages = [m.model_dump() for m in body.messages]
@@ -170,13 +186,20 @@ async def chat_completions(
             model=body.model,
             virtual_key_id=virtual_key.id if virtual_key else None,
             team_id=team_id,
-            extra_metadata={"guardrail_triggered": guardrail_triggered},
+            extra_metadata={
+                "guardrail_triggered": guardrail_triggered,
+                "session_id": session_id,
+                "client_service_tag": client_service_tag,
+            },
             **kwargs,
         )
     except (BudgetExceededError, KeyInactiveError) as exc:
         # Budget callback raises these custom exceptions — map to correct HTTP codes
         if virtual_key:
-            await _persist_blocked_request(virtual_key.id, team_id, body.model, exc.status_code)
+            await _persist_blocked_request(
+                virtual_key.id, team_id, body.model, exc.status_code,
+                session_id=session_id, client_service_tag=client_service_tag
+            )
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except RuntimeError as exc:
         # e.g. "LiteLLM Router not initialized. Add at least one active model."
@@ -223,6 +246,8 @@ class ImageGenerationRequest(BaseModel):
     response_format: Literal["url", "b64_json"] | None = "url"
     source_image: str | None = None
     source_mime_type: str | None = None
+    session_id: str | None = None
+    client_service_tag: str | None = None
 
 
 @router.post("/images/generations")
@@ -232,7 +257,12 @@ async def images_generations(
     db: FirestoreStore = Depends(get_db),
     litellm_service=Depends(get_litellm_service),
 ) -> Any:
-    virtual_key, team_id = await _authenticate_and_rate_limit(request, body.model, db)
+    session_id = request.headers.get("X-Session-ID") or body.session_id
+    client_service_tag = request.headers.get("X-Client-Service-Tag") or body.client_service_tag
+
+    virtual_key, team_id = await _authenticate_and_rate_limit(
+        request, body.model, db, session_id=session_id, client_service_tag=client_service_tag
+    )
 
     kwargs: dict[str, Any] = {}
     if body.n is not None:
@@ -250,6 +280,10 @@ async def images_generations(
             team_id=team_id,
             source_base64=body.source_image,
             mime_type=body.source_mime_type,
+            extra_metadata={
+                "session_id": session_id,
+                "client_service_tag": client_service_tag,
+            },
             **kwargs,
         )
         try:
@@ -259,7 +293,10 @@ async def images_generations(
         return JSONResponse(content=response_dict)
     except (BudgetExceededError, KeyInactiveError) as exc:
         if virtual_key:
-            await _persist_blocked_request(virtual_key.id, team_id, body.model, exc.status_code)
+            await _persist_blocked_request(
+                virtual_key.id, team_id, body.model, exc.status_code,
+                session_id=session_id, client_service_tag=client_service_tag
+            )
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -276,6 +313,8 @@ class VideoGenerationRequest(BaseModel):
     fps: int | None = None
     aspect_ratio: str | None = None
     wait_for_completion: bool = False
+    session_id: str | None = None
+    client_service_tag: str | None = None
 
 
 @router.post("/videos/generations")
@@ -285,7 +324,12 @@ async def videos_generations(
     db: FirestoreStore = Depends(get_db),
     litellm_service=Depends(get_litellm_service),
 ) -> Any:
-    virtual_key, team_id = await _authenticate_and_rate_limit(request, body.model, db)
+    session_id = request.headers.get("X-Session-ID") or body.session_id
+    client_service_tag = request.headers.get("X-Client-Service-Tag") or body.client_service_tag
+
+    virtual_key, team_id = await _authenticate_and_rate_limit(
+        request, body.model, db, session_id=session_id, client_service_tag=client_service_tag
+    )
 
     kwargs: dict[str, Any] = {}
     if body.duration_seconds is not None:
@@ -299,6 +343,12 @@ async def videos_generations(
         response = await litellm_service.generate_video(
             prompt=body.prompt,
             model=body.model,
+            virtual_key_id=virtual_key.id if virtual_key else None,
+            team_id=team_id,
+            extra_metadata={
+                "session_id": session_id,
+                "client_service_tag": client_service_tag,
+            },
             **kwargs,
         )
         
@@ -341,7 +391,10 @@ async def videos_generations(
         return JSONResponse(content=response_dict)
     except (BudgetExceededError, KeyInactiveError) as exc:
         if virtual_key:
-            await _persist_blocked_request(virtual_key.id, team_id, body.model, exc.status_code)
+            await _persist_blocked_request(
+                virtual_key.id, team_id, body.model, exc.status_code,
+                session_id=session_id, client_service_tag=client_service_tag
+            )
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

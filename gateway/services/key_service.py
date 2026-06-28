@@ -29,7 +29,8 @@ async def validate_key(raw_key: str, db: FirestoreStore) -> FirestoreObject | No
         return None
 
     # Check expiry
-    if key.expires_at and key.expires_at < datetime.now(timezone.utc):
+    expires_at = getattr(key, "expires_at", None)
+    if expires_at and expires_at < datetime.now(timezone.utc):
         return None
 
     return key

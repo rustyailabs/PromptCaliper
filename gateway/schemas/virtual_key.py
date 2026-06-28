@@ -30,18 +30,18 @@ class VirtualKeyResponse(BaseModel):
     id: int
     key_prefix: str
     owner_label: str
-    team_id: int | None
+    team_id: int | None = None
     team_name: str | None = None
-    monthly_budget_usd: Decimal | None
-    budget_action: str
-    rpm_limit: int | None
-    tpm_limit: int | None
-    allowed_models: list[str] | None
-    current_spend_usd: Decimal
-    budget_reset_at: datetime
-    expires_at: datetime | None
-    is_active: bool
-    created_at: datetime
+    monthly_budget_usd: Decimal | None = None
+    budget_action: str = "block"
+    rpm_limit: int | None = None
+    tpm_limit: int | None = None
+    allowed_models: list[str] | None = None
+    current_spend_usd: Decimal = Decimal(0)
+    budget_reset_at: datetime | None = None
+    expires_at: datetime | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

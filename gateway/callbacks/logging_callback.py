@@ -34,6 +34,8 @@ class RequestLoggingCallback(CustomLogger):
             metadata = litellm_params.get("metadata") or kwargs.get("metadata") or {}
             virtual_key_id = metadata.get("virtual_key_id")
             team_id = metadata.get("team_id")
+            session_id = metadata.get("session_id")
+            client_service_tag = metadata.get("client_service_tag")
 
             latency_ms = int((end_time - start_time).total_seconds() * 1000)
 
@@ -124,6 +126,8 @@ class RequestLoggingCallback(CustomLogger):
                     "guardrail_triggered": metadata.get("guardrail_triggered", False),
                     "error_message": error_message,
                     "started_at": started_at,
+                    "session_id": session_id,
+                    "client_service_tag": client_service_tag,
                 })
 
                 # Always write SpendLedger — even zero-cost models need token tracking

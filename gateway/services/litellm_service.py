@@ -290,6 +290,9 @@ class LiteLLMService:
         self,
         prompt: str,
         model: str,
+        virtual_key_id: int | None = None,
+        team_id: int | None = None,
+        extra_metadata: dict | None = None,
         **kwargs: Any,
     ) -> Any:
         """Route a video generation request through LiteLLM."""
@@ -308,9 +311,16 @@ class LiteLLMService:
             loc = "us-central1"
         kwargs.setdefault("vertex_location", loc)
 
+        metadata = {
+            "virtual_key_id": virtual_key_id,
+            "team_id": team_id,
+            **(extra_metadata or {}),
+        }
+
         response = await litellm.avideo_generation(
             model=litellm_model,
             prompt=prompt,
+            metadata=metadata,
             **kwargs,
         )
         return response
