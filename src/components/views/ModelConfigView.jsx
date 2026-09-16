@@ -12,10 +12,13 @@ const PROVIDERS = [
   { id: 'openai',    label: 'OpenAI',    color: 'var(--ral-cyan)' },
   { id: 'anthropic', label: 'Anthropic', color: '#d97706' },
   { id: 'azure',     label: 'Azure',     color: '#3b82f6' },
-  { id: 'gemini',    label: 'Gemini',    color: '#8b5cf6' },
+  { id: 'gemini',    label: 'Gemini API', color: '#8b5cf6' },
+  { id: 'vertex_ai', label: 'Vertex AI', color: '#a855f7' },
   { id: 'bedrock',   label: 'Bedrock',   color: '#f59e0b' },
   { id: 'ollama',    label: 'Ollama',    color: 'var(--ral-rust-core)' },
 ];
+
+const PROVIDER_LABELS = Object.fromEntries(PROVIDERS.map((p) => [p.id, p.label]));
 
 const DEFAULT_FORM = {
   display_name: '', litellm_model_name: '', provider: 'openai',
@@ -127,7 +130,9 @@ const ModelConfigView = () => {
               <div>
                 <h4 className="text-[var(--ral-white)] font-bold text-base">{model.display_name}</h4>
                 <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs px-2 py-0.5 rounded bg-[rgba(255,255,255,0.05)] text-[var(--ral-grey-light)]">{model.provider}</span>
+                  <span className="text-xs px-2 py-0.5 rounded bg-[rgba(255,255,255,0.05)] text-[var(--ral-grey-light)]">
+                    {PROVIDER_LABELS[model.provider] || model.provider}
+                  </span>
                   <span className="text-xs text-[var(--ral-grey-mid)] font-mono">{model.litellm_model_name}</span>
                   {model.context_window && <span className="text-xs text-[var(--ral-grey-mid)] font-mono">{(model.context_window / 1000).toFixed(0)}k ctx</span>}
                 </div>
@@ -204,7 +209,7 @@ const ModelConfigView = () => {
                 })}
               </div>
             </Field>
-            <Field label="API Key Env Var (optional)" hint="Name of the env var holding the API key — leave blank for local/Ollama models"><Input value={form.api_key_env_var} onChange={e => setForm(f => ({...f, api_key_env_var: e.target.value}))} placeholder="OPENAI_API_KEY" /></Field>
+            <Field label="API Key Env Var (optional)" hint="Name of the env var holding the API key — leave blank for Vertex AI or local/Ollama models"><Input value={form.api_key_env_var} onChange={e => setForm(f => ({...f, api_key_env_var: e.target.value}))} placeholder="OPENAI_API_KEY" /></Field>
             <Field label="API Base (optional — for Azure/Ollama)"><Input value={form.api_base} onChange={e => setForm(f => ({...f, api_base: e.target.value}))} placeholder="https://your-azure.openai.azure.com" /></Field>
             <div className="grid grid-cols-3 gap-3">
               <Field label="Routing Weight"><Input type="number" value={form.routing_weight} onChange={e => setForm(f => ({...f, routing_weight: e.target.value}))} min={1} /></Field>

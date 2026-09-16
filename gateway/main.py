@@ -1,25 +1,24 @@
 """PromptCaliper AI Gateway — FastAPI application factory."""
 import logging
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-from sqlalchemy import select, text
-
 from gateway.auth.router import router as auth_router
 from gateway.callbacks.budget_callback import BudgetEnforcementCallback
 from gateway.callbacks.logging_callback import RequestLoggingCallback
 from gateway.config import settings
-from gateway.db.base import Base, engine
-from gateway.db.session import AsyncSessionLocal
+from gateway.firestore_store import store, utcnow
 from gateway.routers.gateway import router as gateway_router
 from gateway.services.cache_service import apply_cache_config
-from gateway.services.litellm_service import LiteLLMService
+from gateway.services.litellm_service import LiteLLMService, active_model_configs
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -29,160 +28,83 @@ logger = logging.getLogger(__name__)
 
 
 async def _create_tables() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables ensured.")
+    logger.info("Firestore database '%s' ready.", settings.FIRESTORE_DATABASE)
 
 
 async def _seed_superadmin() -> None:
     from gateway.auth.service import hash_password
-    from gateway.models.admin_user import AdminUser
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(AdminUser).where(AdminUser.username == settings.SUPERADMIN_USERNAME))
-        if result.scalar_one_or_none():
-            return
-        admin = AdminUser(
-            username=settings.SUPERADMIN_USERNAME,
-            email=settings.SUPERADMIN_EMAIL,
-            hashed_password=hash_password(settings.SUPERADMIN_PASSWORD),
-            is_superadmin=True,
-        )
-        db.add(admin)
-        await db.commit()
-        logger.info("Superadmin '%s' created.", settings.SUPERADMIN_USERNAME)
-
-
-async def _seed_cache_config() -> None:
-    from gateway.models.cache_config import CacheConfig
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(CacheConfig))
-        if result.scalar_one_or_none():
-            return
-        db.add(CacheConfig())
-        await db.commit()
-        logger.info("Default cache config row seeded.")
+    existing = store.first("admin_users", username=settings.SUPERADMIN_USERNAME)
+    if existing:
+        existing.hashed_password = hash_password(settings.SUPERADMIN_PASSWORD)
+        existing.is_active = True
+        existing.is_superadmin = True
+        store.save(existing)
+        logger.info("Superadmin '%s' password synced from env.", settings.SUPERADMIN_USERNAME)
+        return
+    store.create("admin_users", {
+        "username": settings.SUPERADMIN_USERNAME,
+        "email": settings.SUPERADMIN_EMAIL,
+        "hashed_password": hash_password(settings.SUPERADMIN_PASSWORD),
+        "is_superadmin": True,
+        "is_active": True,
+        "last_login_at": None,
+    })
+    logger.info("Superadmin '%s' created.", settings.SUPERADMIN_USERNAME)
 
 
-async def _seed_system_config() -> None:
-    """Seed the singleton system_config row (id=1) on first boot.
+async def _seed_vertex_models() -> None:
+    """Seed default Vertex AI Gemini models when VERTEXAI_PROJECT is configured."""
+    if not settings.VERTEXAI_PROJECT:
+        return
 
-    Uses settings.LOG_PROMPT_CONTENT as the initial value so existing .env
-    deployments see no behaviour change. On subsequent boots the DB value wins;
-    changing .env after first run has no effect (superadmin must use the UI).
-    """
-    from gateway.models.system_config import SystemConfig
-
-    async with AsyncSessionLocal() as db:
-        existing = await db.get(SystemConfig, 1)
-        if existing:
-            return
-        db.add(SystemConfig(id=1, log_prompt_content=settings.LOG_PROMPT_CONTENT))
-        await db.commit()
-        logger.info(
-            "System config seeded (log_prompt_content=%s).",
-            settings.LOG_PROMPT_CONTENT,
-        )
-
-
-async def _seed_default_guardrails() -> None:
-    """
-    On first run, create a baseline set of guardrails that are always active.
-    Skipped entirely if any guardrail row already exists (not a first run).
-    """
-    from gateway.models.guardrail_config import GuardrailConfig
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(GuardrailConfig))
-        if result.scalars().first():
-            return  # Guardrails already configured — don't overwrite admin changes
-
-        defaults = [
-            GuardrailConfig(
-                name="Prompt Injection Shield",
-                guardrail_type="prompt_injection",
-                applies_to="both",
-                config_json={},
-                action_on_trigger="rewrite",
-                is_active=True,
-            ),
-            GuardrailConfig(
-                name="Harmful Content Filter",
-                guardrail_type="content_filter",
-                applies_to="both",
-                config_json={"categories": ["violence", "self-harm", "adult", "hate"]},
-                action_on_trigger="block",
-                is_active=True,
-            ),
-            GuardrailConfig(
-                name="PII Redaction",
-                guardrail_type="pii_redaction",
-                applies_to="both",
-                config_json={},
-                action_on_trigger="redact",
-                is_active=True,
-            ),
-        ]
-        for g in defaults:
-            db.add(g)
-        await db.commit()
-        logger.info("Seeded %d default guardrail(s).", len(defaults))
-
-
-async def _seed_default_models() -> None:
-    """On first run, create sensible default model configs for every provider key that is set."""
-    from gateway.models.model_config import ModelConfig
-
-    # (display_name, litellm_model_name, provider, api_key_env_var, condition)
-    candidates = [
-        ("gpt-4o-mini",          "gpt-4o-mini",                          "openai",    "OPENAI_API_KEY",    bool(settings.OPENAI_API_KEY)),
-        ("gpt-4o",               "gpt-4o",                               "openai",    "OPENAI_API_KEY",    bool(settings.OPENAI_API_KEY)),
-        ("claude-3-5-haiku",     "anthropic/claude-3-5-haiku-20241022",  "anthropic", "ANTHROPIC_API_KEY", bool(settings.ANTHROPIC_API_KEY)),
-        ("claude-3-5-sonnet",    "anthropic/claude-3-5-sonnet-20241022", "anthropic", "ANTHROPIC_API_KEY", bool(settings.ANTHROPIC_API_KEY)),
-        ("gemini-1.5-flash",     "gemini/gemini-1.5-flash",              "gemini",    "GEMINI_API_KEY",    bool(settings.GEMINI_API_KEY)),
-        ("ollama-llama3",        "ollama/llama3",                        "ollama",    "OLLAMA_API_BASE",   True),  # always available if Ollama is running
+    # Vertex AI image generation family commonly referred to as "nano banana".
+    defaults = [
+        ("gemini-3.1-pro", "vertex_ai/gemini-3.1-pro"),
+        ("gemini-3.5-flash", "vertex_ai/gemini-3.5-flash"),
+        ("gemini-2.5-flash-image", "vertex_ai/gemini-2.5-flash-image"),
+        ("gemini-3.1-flash-image", "vertex_ai/gemini-3.1-flash-image"),
+        ("gemini-3-pro-image-preview", "vertex_ai/gemini-3-pro-image-preview"),
+        ("veo-3.1", "vertex_ai/veo-3.1-generate-001"),
+        ("veo-3.1-fast", "vertex_ai/veo-3.1-fast-generate-001"),
+        ("veo-3.1-lite", "vertex_ai/veo-3.1-lite-generate-001"),
+        ("veo-3.0", "vertex_ai/veo-3.0-generate-001"),
+        ("veo-3.0-fast", "vertex_ai/veo-3.0-fast-generate-001"),
+        ("veo-2.0", "vertex_ai/veo-2.0-generate-001"),
     ]
-
-    async with AsyncSessionLocal() as db:
-        # Skip entirely if any model already exists (not a first run)
-        result = await db.execute(select(ModelConfig))
-        if result.scalars().first():
-            return
-
-        seeded = []
-        for display_name, litellm_name, provider, env_var, condition in candidates:
-            if not condition:
-                continue
-            # Skip Ollama default unless an explicit base URL was set (non-default)
-            if provider == "ollama" and settings.OLLAMA_API_BASE == "http://localhost:11434":
-                continue
-            db.add(ModelConfig(
-                display_name=display_name,
-                litellm_model_name=litellm_name,
-                provider=provider,
-                api_key_env_var=env_var,
-                is_active=True,
-                status="active",
-            ))
-            seeded.append(display_name)
-
-        if seeded:
-            await db.commit()
-            logger.info("Seeded %d default model config(s): %s", len(seeded), seeded)
-        else:
-            logger.warning(
-                "No provider API keys found in .env — no default models seeded. "
-                "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY, then restart."
-            )
+    seeded = []
+    for display_name, litellm_name in defaults:
+        existing = store.first("model_configs", display_name=display_name)
+        if existing:
+            if existing.litellm_model_name != litellm_name:
+                existing.litellm_model_name = litellm_name
+                store.save(existing)
+                logger.info("Updated model config for '%s' to '%s'", display_name, litellm_name)
+            continue
+        store.create("model_configs", {
+            "display_name": display_name,
+            "litellm_model_name": litellm_name,
+            "provider": "vertex_ai",
+            "api_base": None,
+            "api_key_env_var": None,
+            "routing_weight": 1,
+            "fallback_priority": None,
+            "max_tokens": None,
+            "temperature_default": None,
+            "cost_per_input_token": None,
+            "cost_per_output_token": None,
+            "context_window": None,
+            "avg_latency_ms": None,
+            "is_active": True,
+            "status": "active",
+        })
+        seeded.append(display_name)
+    if seeded:
+        logger.info("Seeded Vertex AI model(s): %s", seeded)
 
 
 async def _init_litellm(app: FastAPI) -> None:
-    from gateway.models.model_config import ModelConfig
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(ModelConfig).where(ModelConfig.is_active == True))
-        model_configs = result.scalars().all()
+    model_configs = active_model_configs(store)
 
     svc = LiteLLMService()
     svc.initialize(model_configs)
@@ -192,56 +114,40 @@ async def _init_litellm(app: FastAPI) -> None:
 
 
 async def _init_cache() -> None:
-    from gateway.models.cache_config import CacheConfig
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(CacheConfig))
-        config = result.scalar_one_or_none()
+    configs = store.list("cache_configs")
+    config = configs[0] if configs else None
     apply_cache_config(config)
 
 
 async def _scheduled_budget_reset() -> None:
     """Reset virtual key spend counters — runs 1st of each month at 00:05 UTC."""
-    from sqlalchemy import update
-    from gateway.models.virtual_key import VirtualKey
-    from datetime import datetime, timezone
 
     logger.info("APScheduler: running monthly budget reset…")
-    async with AsyncSessionLocal() as db:
-        await db.execute(
-            update(VirtualKey).values(
-                current_spend_usd=0.0,
-                budget_reset_at=datetime.now(timezone.utc),
-            )
-        )
-        await db.commit()
+    for key in store.list("virtual_keys"):
+        key.current_spend_usd = 0.0
+        key.budget_reset_at = utcnow()
+        store.save(key)
     logger.info("APScheduler: monthly budget reset complete.")
 
 
 async def _scheduled_blocklist_cleanup() -> None:
     """Remove expired refresh token blocklist entries — runs daily at 03:00 UTC."""
-    from sqlalchemy import delete
-    from gateway.models.admin_user import RefreshTokenBlocklist
-    from datetime import datetime, timezone
-
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     logger.info("APScheduler: cleaning up expired blocklist tokens…")
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            delete(RefreshTokenBlocklist).where(RefreshTokenBlocklist.expires_at < now)
-        )
-        await db.commit()
-    logger.info("APScheduler: removed %d expired blocklist entries.", result.rowcount)
+    removed = 0
+    for token in store.list("refresh_token_blocklist"):
+        if token.expires_at < now:
+            store.delete("refresh_token_blocklist", token.id)
+            removed += 1
+    logger.info("APScheduler: removed %d expired blocklist entries.", removed)
 
 
 async def _scheduled_alert_evaluation() -> None:
     """Evaluate alert rules — runs every 5 minutes."""
     try:
         from gateway.services.alert_service import AlertService
-        async with AsyncSessionLocal() as db:
-            svc = AlertService(db)
-            await svc.evaluate_all_rules()
-            await db.commit()
+        svc = AlertService(store)
+        await svc.evaluate_all_rules()
     except Exception as exc:
         logger.warning("APScheduler: alert evaluation failed: %s", exc)
 
@@ -252,10 +158,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting PromptCaliper Gateway v%s …", settings.APP_VERSION)
     await _create_tables()
     await _seed_superadmin()
-    await _seed_cache_config()
-    await _seed_system_config()
-    await _seed_default_models()
-    await _seed_default_guardrails()
+    await _seed_vertex_models()
     await _init_litellm(app)
     await _init_cache()
 
@@ -291,7 +194,7 @@ async def lifespan(app: FastAPI):
     # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("Shutting down gateway…")
     scheduler.shutdown(wait=False)
-    await engine.dispose()
+    return
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -302,7 +205,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Cache-Control"] = "no-store"
+        if request.url.path.startswith("/assets/") or request.url.path == "/favicon.ico":
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-store"
         # Only set HSTS when running over TLS (not local HTTP dev)
         if request.url.scheme == "https":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -354,8 +260,7 @@ def create_app() -> FastAPI:
         db_ok = False
         db_error: str | None = None
         try:
-            async with AsyncSessionLocal() as db:
-                await db.execute(text("SELECT 1"))
+            store.list("system_config")
             db_ok = True
         except Exception as exc:
             db_error = str(exc)
@@ -368,6 +273,8 @@ def create_app() -> FastAPI:
         }
         status_code = 200 if db_ok else 503
         return JSONResponse(content=payload, status_code=status_code)
+
+    _register_frontend_routes(app)
 
     return app
 
@@ -402,6 +309,41 @@ def _register_management_routers(app: FastAPI) -> None:
                 "Failed to load router '%s' (prefix=%s): %s — this API surface will be unavailable.",
                 module_path, prefix, exc,
             )
+
+
+def _register_frontend_routes(app: FastAPI) -> None:
+    """Serve the built SPA from the same container when enabled."""
+    if not settings.SERVE_FRONTEND:
+        return
+
+    frontend_root = Path(settings.FRONTEND_DIST_DIR).expanduser().resolve()
+    index_file = frontend_root / "index.html"
+    assets_dir = frontend_root / "assets"
+
+    if not index_file.exists():
+        logger.warning(
+            "SERVE_FRONTEND is enabled, but no built frontend was found at %s.",
+            index_file,
+        )
+        return
+
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="frontend-assets")
+
+    @app.get("/", include_in_schema=False)
+    async def frontend_index():
+        return FileResponse(index_file)
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def frontend_spa(path: str):
+        if path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+        candidate = (frontend_root / path).resolve()
+        if (candidate == frontend_root or frontend_root in candidate.parents) and candidate.is_file():
+            return FileResponse(candidate)
+
+        return FileResponse(index_file)
 
 
 app = create_app()

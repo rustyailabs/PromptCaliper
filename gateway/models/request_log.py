@@ -29,3 +29,5 @@ class RequestLog(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    session_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    client_service_tag: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)

@@ -29,8 +29,13 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (username, password) => {
     await authService.login(username, password);
-    const me = await authService.getMe();
-    setUser(me);
+    try {
+      const me = await authService.getMe();
+      setUser(me || { username });
+    } catch {
+      // Login already succeeded and tokens are stored; fall back to a minimal user object.
+      setUser({ username });
+    }
   }, []);
 
   const logout = useCallback(async () => {

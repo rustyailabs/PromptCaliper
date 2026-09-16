@@ -8,7 +8,6 @@ from collections import defaultdict
 from threading import Lock
 
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
