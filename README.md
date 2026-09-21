@@ -533,3 +533,7 @@ Models are registered in the **Model Registry** view and can be enabled/disabled
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Company 
+
+[Rusty AI Labs](https://www.rustyailabs.com/) 
